@@ -1,0 +1,54 @@
+steps:
+  # 1. Build the Docker image.
+  # VITE_* values are inlined into the SPA at build time, so they are passed as
+  # --build-arg here (NOT as Cloud Run env vars, which would arrive too late).
+  - name: "gcr.io/cloud-builders/docker"
+    id: Build
+    args:
+      - "build"
+      - "-t"
+      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$COMMIT_SHA"
+      - "--build-arg"
+      - "VITE_PROXY_BASE=$_VITE_PROXY_BASE"
+      - "--build-arg"
+      - "VITE_UNITY_ASSET_BASE=$_VITE_UNITY_ASSET_BASE"
+      - "."
+
+  # 2. Push the Docker image to Artifact Registry.
+  - name: "gcr.io/cloud-builders/docker"
+    id: Push
+    args:
+      - "push"
+      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$COMMIT_SHA"
+
+  # 3. Deploy the container image to Cloud Run.
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: Deploy
+    args:
+      - "gcloud"
+      - "run"
+      - "deploy"
+      - "athena-guardians"
+      - "--image"
+      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$COMMIT_SHA"
+      - "--region"
+      - "$_REGION"
+      - "--platform"
+      - "managed"
+      # Public, internet-facing static frontend.
+      - "--allow-unauthenticated"
+
+images:
+  - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$COMMIT_SHA"
+
+# Substitute variables.
+substitutions:
+  _AR_HOSTNAME: us-central1-docker.pkg.dev
+  _REGION: us-central1
+  # The PUBLIC proxy_service URL the browser talks to (auth + API + WebSocket).
+  _VITE_PROXY_BASE: "https://athena-proxy-api-12367074465.us-central1.run.app"
+  # Same-origin path; server.js reverse-proxies /unity to the GCS bucket so the
+  # browser loads Unity assets without hitting the bucket's CORS allowlist.
+  _VITE_UNITY_ASSET_BASE: "/unity"
+options:
+  logging: CLOUD_LOGGING_ONLY
