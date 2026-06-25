@@ -50,8 +50,8 @@ substitutions:
   _REGION: us-central1
   # The PUBLIC proxy_service URL the browser talks to (auth + API + WebSocket).
   _VITE_PROXY_BASE: "https://athena-proxy-api-12367074465.us-central1.run.app"
-  # Same-origin path; server.js reverse-proxies /unity to the GCS bucket so the
-  # browser loads Unity assets without hitting the bucket's CORS allowlist.
-  _VITE_UNITY_ASSET_BASE: "/unity"
+  # Load the Unity build directly from GCS. The assets-athena-app bucket CORS
+  # policy must include the deployed Guardians origins.
+  _VITE_UNITY_ASSET_BASE: "https://storage.googleapis.com/assets-athena-app/unity"
 options:
   logging: CLOUD_LOGGING_ONLY

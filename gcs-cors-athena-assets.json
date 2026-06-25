@@ -1,0 +1,13 @@
+[
+  {
+    "origin": [
+      "https://athena-476423.uc.r.appspot.com",
+      "https://athena-learning.app",
+      "https://athena-guardians-mlkumvppsa-uc.a.run.app",
+      "https://athena-guardians-12367074465.us-central1.run.app"
+    ],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["*"],
+    "maxAgeSeconds": 3600
+  }
+]
