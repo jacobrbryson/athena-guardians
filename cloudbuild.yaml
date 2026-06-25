@@ -1,5 +1,8 @@
 steps:
   # 1. Build the Docker image.
+  # The image is tagged with $BUILD_ID (always populated) rather than
+  # $COMMIT_SHA, which is empty for a manual `gcloud builds submit` and would
+  # produce an invalid, tagless image reference.
   # VITE_* values are inlined into the SPA at build time, so they are passed as
   # --build-arg here (NOT as Cloud Run env vars, which would arrive too late).
   - name: "gcr.io/cloud-builders/docker"
@@ -7,7 +10,7 @@ steps:
     args:
       - "build"
       - "-t"
-      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$COMMIT_SHA"
+      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$BUILD_ID"
       - "--build-arg"
       - "VITE_PROXY_BASE=$_VITE_PROXY_BASE"
       - "--build-arg"
@@ -19,7 +22,7 @@ steps:
     id: Push
     args:
       - "push"
-      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$COMMIT_SHA"
+      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$BUILD_ID"
 
   # 3. Deploy the container image to Cloud Run.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
@@ -30,7 +33,7 @@ steps:
       - "deploy"
       - "athena-guardians"
       - "--image"
-      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$COMMIT_SHA"
+      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$BUILD_ID"
       - "--region"
       - "$_REGION"
       - "--platform"
@@ -39,7 +42,7 @@ steps:
       - "--allow-unauthenticated"
 
 images:
-  - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$COMMIT_SHA"
+  - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-guardians:$BUILD_ID"
 
 # Substitute variables.
 substitutions:
