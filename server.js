@@ -6,9 +6,9 @@
  * a hard refresh). Binds to the Cloud Run-provided PORT.
  */
 import path from 'path';
-import { Readable } from 'stream';
 import { fileURLToPath } from 'url';
 import express from 'express';
+import httpProxy from 'http-proxy';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,48 +19,36 @@ const DIST = path.join(__dirname, 'dist');
 // The Unity WebGL build is hosted in a GCS bucket whose CORS policy only allows
 // a fixed origin allowlist. Rather than open the bucket up (or copy ~126MB into
 // this image), we reverse-proxy /unity to it so the browser loads the assets
-// same-origin. Range requests are forwarded so Unity's streaming loader works.
-// Bucket root that contains the `unity/` folder. The original '/unity/...' path
-// is preserved when proxying (matches the Vite dev-server convention).
+// same-origin. UNITY_UPSTREAM is the bucket origin + base path that contains the
+// `unity/` folder; the original '/unity/...' request path is appended.
 const UNITY_UPSTREAM = (
   process.env.UNITY_UPSTREAM || 'https://storage.googleapis.com/assets-athena-app'
 ).replace(/\/$/, '');
 
-const PASS_THROUGH_HEADERS = [
-  'content-type',
-  'content-length',
-  'accept-ranges',
-  'content-range',
-  'etag',
-  'last-modified',
-  'cache-control',
-];
+// Use http-proxy (raw, streaming byte passthrough) rather than a fetch() proxy.
+// This preserves Range and Content-* headers verbatim and streams without
+// buffering — essential for the ~49MB unity.wasm, which a fetch()-based proxy
+// fails to deliver intact on Cloud Run. Mirrors the Vite dev server + proxy_service.
+const unityProxy = httpProxy.createProxyServer({
+  target: UNITY_UPSTREAM,
+  changeOrigin: true, // Host: storage.googleapis.com (GCS virtual hosting)
+});
+unityProxy.on('error', (err, _req, res) => {
+  console.error('[unity proxy]', err.message);
+  if (res && !res.headersSent) {
+    res.writeHead(502, { 'Content-Type': 'text/plain' });
+  }
+  res?.end?.('Unity asset proxy error');
+});
 
 // Health check for Cloud Run / uptime probes.
 app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
 
-app.use('/unity', async (req, res) => {
-  // req.originalUrl keeps the '/unity' prefix (req.url drops it under the mount).
-  const upstreamUrl = `${UNITY_UPSTREAM}${req.originalUrl}`;
-  try {
-    const headers = {};
-    if (req.headers.range) headers.range = req.headers.range;
-    const upstream = await fetch(upstreamUrl, { headers });
-
-    res.status(upstream.status);
-    for (const h of PASS_THROUGH_HEADERS) {
-      const v = upstream.headers.get(h);
-      if (v) res.setHeader(h, v);
-    }
-    if (!upstream.body) {
-      res.end();
-      return;
-    }
-    Readable.fromWeb(upstream.body).pipe(res);
-  } catch (err) {
-    console.error(`[unity proxy] ${upstreamUrl}:`, err.message);
-    res.status(502).end('Unity asset proxy error');
-  }
+app.use('/unity', (req, res) => {
+  // Under the mount, req.url has '/unity' stripped — restore it so the upstream
+  // path becomes <bucket base>/unity/Build/... (prependPath keeps the base).
+  req.url = `/unity${req.url}`;
+  unityProxy.web(req, res);
 });
 
 // Hashed assets are immutable; cache them aggressively. index.html is not.
