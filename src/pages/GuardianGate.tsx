@@ -18,6 +18,9 @@ import { LOCATE_MESSAGES, VERIFY_MESSAGES } from '../athena/sequences';
  *
  * When `prefilledId` is set (the /:guardian_id deep link) we skip straight to
  * the secret step with the ID already captured.
+ *
+ * `initialError` seeds the status line — used when a QR token redeem (/q/:token)
+ * failed and dropped the Guardian here to authenticate manually.
  */
 
 const GENERIC_ERROR = 'Guardian credentials not recognized.';
@@ -31,16 +34,17 @@ type Step = 'id' | 'locating' | 'secret' | 'verifying';
 
 interface Props {
   prefilledId?: string;
+  initialError?: string;
 }
 
-export function GuardianGate({ prefilledId }: Props) {
+export function GuardianGate({ prefilledId, initialError }: Props) {
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const [guardianId, setGuardianId] = useState(prefilledId ?? '');
   const [secret, setSecret] = useState('');
   const [step, setStep] = useState<Step>(prefilledId ? 'secret' : 'id');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
 
   const idInputRef = useRef<HTMLInputElement | null>(null);
   const secretInputRef = useRef<HTMLInputElement | null>(null);

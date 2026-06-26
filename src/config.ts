@@ -25,6 +25,15 @@ export const UNITY_ASSET_BASE: string = (
 export const ADVENTURE_KEYS = ['lake_norman_guardians', 'rescue_ratatouille'] as const;
 export type AdventureKey = (typeof ADVENTURE_KEYS)[number];
 
+// The seeded test Guardian (db/guardians.test.json). Used to expose dev-only
+// affordances — e.g. the "Onboarding" replay toggle — only for this account.
+export const TEST_GUARDIAN_ID = '12345678';
+
+// When this localStorage flag is 'true' AND the test Guardian is signed in, the
+// first-contact / onboarding sequence replays on every page load (so the
+// experience can be iterated on without re-authenticating).
+export const FORCE_ONBOARDING_KEY = 'guardian_force_onboarding';
+
 /** Build a full proxy URL for a path like '/api/v1/session'. */
 export function proxyUrl(path: string): string {
   return `${PROXY_BASE}${path}`;

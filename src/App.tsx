@@ -4,6 +4,7 @@ import { Splash } from './pages/Splash';
 import { GuardianGate } from './pages/GuardianGate';
 import { AthenaConsole } from './pages/AthenaConsole';
 import { ComingSoon } from './pages/ComingSoon';
+import { GuardianTokenRedeem } from './pages/GuardianTokenRedeem';
 
 const ID_RE = /^\d{8}$/;
 
@@ -61,6 +62,8 @@ export default function App() {
               }
             />
           ))}
+          {/* QR-code single-use login link. Named, so it precedes the deep link. */}
+          <Route path="/q/:token" element={<GuardianTokenRedeem />} />
           {/* Keep the deep link last so it doesn't shadow named routes. */}
           <Route path="/:guardianId" element={<GuardianDeepLink />} />
           <Route path="*" element={<Navigate to="/" replace />} />

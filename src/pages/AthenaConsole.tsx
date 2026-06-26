@@ -5,7 +5,13 @@ import { useVoiceInput } from '../athena/useVoiceInput';
 import { useSpeech } from '../athena/useSpeech';
 import { UnityAthena, type AthenaBridge } from '../athena/UnityAthena';
 import { SequenceOverlay } from '../components/SequenceOverlay';
-import { ARRIVAL_MESSAGES, buildGreeting } from '../athena/sequences';
+import {
+  ARRIVAL_MESSAGES,
+  buildGreeting,
+  NEW_GUARDIAN_PROMPT,
+  buildNotebookPrompt,
+} from '../athena/sequences';
+import { TEST_GUARDIAN_ID, FORCE_ONBOARDING_KEY } from '../config';
 
 /**
  * Authenticated home: the Athena console. Athena is the main interface — large
@@ -26,7 +32,10 @@ const ARRIVAL_MAX_MS = 14000; // safety cap if Unity stalls/fails to load
 
 export function AthenaConsole() {
   const { guardian, logout, arrival, consumeArrival } = useAuth();
-  const chat = useChat(guardian!.guardian_id);
+  const chat = useChat(guardian!.guardian_id, {
+    display_name: guardian!.display_name,
+    adventure_key: guardian!.adventure_key,
+  });
   const tts = useSpeech();
 
   const [draft, setDraft] = useState('');
@@ -37,25 +46,145 @@ export function AthenaConsole() {
   const spokenRef = useRef<string | null>(null);
   const ttsInitRef = useRef(false);
 
+  // Dev-only onboarding replay (test Guardian only). When the flag is on, the
+  // arrival sequence replays on every page load so it can be iterated on.
+  const isTestUser = guardian!.guardian_id === TEST_GUARDIAN_ID;
+  const [forceOnboarding, setForceOnboarding] = useState(
+    () => isTestUser && localStorage.getItem(FORCE_ONBOARDING_KEY) === 'true'
+  );
+
   // --- Athena arrival (first contact) ---
-  // Capture the one-shot arrival signal once; consume it immediately so a later
-  // re-render / reload never replays first contact.
-  const arrivalRef = useRef(arrival);
-  const [arriving, setArriving] = useState(!!arrival);
+  // A fresh login provides the one-shot `arrival` signal; the dev toggle can
+  // also force it. Captured once at mount so re-renders never replay it, and a
+  // real login is consumed so a normal reload doesn't repeat first contact.
+  const effectiveArrival = arrival ?? (forceOnboarding ? { isFirstLogin: true } : null);
+  const arrivalRef = useRef(effectiveArrival);
+  const [arriving, setArriving] = useState(!!effectiveArrival);
   const [unityReady, setUnityReady] = useState(false);
-  const [minElapsed, setMinElapsed] = useState(!arrival);
+  const [minElapsed, setMinElapsed] = useState(!effectiveArrival);
   const bridgeRef = useRef<AthenaBridge | null>(null);
   const finishedRef = useRef(false);
+
+  // --- First-contact onboarding conversation ---
+  // After the greeting, Athena initiates a short scripted exchange instead of
+  // dropping the Guardian into a blank chat. `onboardingStep` is 'awaiting-user'
+  // while Athena waits for the Guardian's first reply (driving the mic pulse),
+  // then null once the exchange completes and normal chat takes over. The ref
+  // mirrors it so input handlers see the current step without a stale closure.
+  type OnboardingStep = 'awaiting-user' | null;
+  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>(null);
+  const onboardingStepRef = useRef<OnboardingStep>(null);
+  const promptDeliveredRef = useRef(false);
+  // The scripted opener Athena just spoke, sent to the AI as the preceding turn
+  // so her response to the Guardian's first reply has real context.
+  const priorAthenaLineRef = useRef<string | null>(null);
+  const setStep = useCallback((s: OnboardingStep) => {
+    onboardingStepRef.current = s;
+    setOnboardingStep(s);
+  }, []);
+
+  // During an onboarding/arrival session we don't surface the Guardian's prior
+  // chat history — first contact should feel fresh, showing only the greeting
+  // and anything said from there on. We snapshot the pre-existing history once
+  // (when chat first loads) and filter those messages out of the transcript.
+  const isOnboarding = !!arrivalRef.current;
+  const historyUuidsRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     if (arrival) consumeArrival();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Voice: hands-free — a final transcript sends immediately.
-  const voice = useVoiceInput((text) => {
-    if (text) void chat.sendMessage(text).catch(() => undefined);
-  });
+  useEffect(() => {
+    if (!chat.ready || historyUuidsRef.current) return;
+    historyUuidsRef.current = new Set(chat.messages.map((m) => m.uuid));
+  }, [chat.ready, chat.messages]);
+
+  const visibleMessages = isOnboarding
+    ? historyUuidsRef.current
+      ? chat.messages.filter((m) => !historyUuidsRef.current!.has(m.uuid))
+      : []
+    : chat.messages;
+
+  const toggleOnboarding = useCallback(() => {
+    setForceOnboarding((v) => {
+      const next = !v;
+      localStorage.setItem(FORCE_ONBOARDING_KEY, String(next));
+      // Toggling ON needs a fresh mount to replay the arrival sequence;
+      // reload now so the user doesn't have to do it manually.
+      if (next) window.location.reload();
+      return next;
+    });
+  }, []);
+
+  // Inject + speak one of Athena's onboarding lines, pre-marking it spoken so
+  // the message-watching TTS effect doesn't say it a second time.
+  const sayAthena = useCallback(
+    (text: string, onEnd?: () => void) => {
+      const uuid = chat.injectAthenaMessage(text);
+      if (uuid) {
+        spokenRef.current = uuid;
+        tts.speak(text, onEnd);
+      } else {
+        onEnd?.();
+      }
+    },
+    [chat, tts]
+  );
+
+  // Athena initiates the conversation: new Guardians get a "communication
+  // check", returning Guardians a note about their notebook. Guarded so the
+  // greeting's TTS callback and the safety timer can't deliver it twice.
+  const deliverOnboardingPrompt = useCallback(() => {
+    if (promptDeliveredRef.current) return;
+    promptDeliveredRef.current = true;
+    const prompt = arrivalRef.current?.isFirstLogin
+      ? NEW_GUARDIAN_PROMPT
+      : buildNotebookPrompt(guardian!.display_name);
+    priorAthenaLineRef.current = prompt;
+    sayAthena(prompt);
+    setStep('awaiting-user');
+  }, [guardian, sayAthena, setStep]);
+
+  // The Guardian's first reply (typed or spoken) completes onboarding. Rather
+  // than scripting Athena's answer, we send the reply through the real chat
+  // pipeline with onboarding context (the line she just said + new/returning),
+  // so the live Athena AI responds in-character. Her reply arrives over the
+  // WebSocket and is spoken by the message-watching TTS effect, exactly like a
+  // normal turn — which is precisely what the conversation becomes from here.
+  const completeOnboarding = useCallback(
+    (userText: string) => {
+      setStep(null);
+      void chat
+        .sendMessage(userText, {
+          onboarding: {
+            priorAthenaLine: priorAthenaLineRef.current || '',
+            firstContact: !!arrivalRef.current?.isFirstLogin,
+          },
+        })
+        .catch(() => undefined);
+    },
+    [chat, setStep]
+  );
+
+  // Single entry point for user input from both the composer and voice. During
+  // the onboarding exchange it routes to the scripted handler; otherwise it
+  // sends to Athena over the live chat channel.
+  const handleUserInput = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      if (onboardingStepRef.current === 'awaiting-user') {
+        completeOnboarding(trimmed);
+        return;
+      }
+      void chat.sendMessage(trimmed).catch(() => undefined);
+    },
+    [chat, completeOnboarding]
+  );
+
+  // Voice: hands-free — a final transcript is handled immediately.
+  const voice = useVoiceInput(handleUserInput);
 
   const finishArrival = useCallback(() => {
     if (finishedRef.current) return;
@@ -65,13 +194,22 @@ export function AthenaConsole() {
     // Friendly greeting animation from the existing Unity bridge.
     bridgeRef.current?.playGesture('Wave');
 
-    // Personalized greeting — spoken via the TTS effect that watches messages.
+    // Personalized greeting. We speak it directly here (and pre-mark it as
+    // spoken) rather than leaving it to the message-watching TTS effect: if the
+    // session/history fetch resolves after arrival, that effect's first-populate
+    // guard would mark the greeting as already-spoken and swallow it. When the
+    // greeting finishes (or right away if TTS is off), Athena opens the
+    // onboarding conversation after a short beat.
     const greeting = buildGreeting(
       !!arrivalRef.current?.isFirstLogin,
       guardian!.display_name
     );
-    chat.injectAthenaMessage(greeting);
-  }, [chat, guardian]);
+    sayAthena(greeting, () => window.setTimeout(deliverOnboardingPrompt, 1500));
+
+    // Safety net: if the TTS end callback never fires (flaky speechSynthesis),
+    // still open the conversation. The guard makes this idempotent.
+    window.setTimeout(deliverOnboardingPrompt, 9000);
+  }, [guardian, sayAthena, deliverOnboardingPrompt]);
 
   // Arrival timers: hold for a minimum, give up after a max.
   useEffect(() => {
@@ -139,10 +277,17 @@ export function AthenaConsole() {
     const text = draft.trim();
     if (!text) return;
     setDraft('');
-    void chat.sendMessage(text).catch(() => undefined);
+    handleUserInput(text);
   }
 
   const adventure = ADVENTURE_LABELS[guardian!.adventure_key] || guardian!.adventure_key;
+
+  // While Athena is waiting for the Guardian's first onboarding reply, the mic
+  // gently pulses to invite voice input. It stops the moment they start
+  // interacting — typing a character or opening the mic — since voice is
+  // encouraged but never required.
+  const micPulsing =
+    onboardingStep === 'awaiting-user' && !voice.listening && !draft.trim();
 
   return (
     <div className="flex flex-col h-[100dvh] bg-black text-emerald-50">
@@ -190,6 +335,23 @@ export function AthenaConsole() {
                   <span className="opacity-50">{tts.enabled ? 'on' : 'off'}</span>
                 </button>
               )}
+              {isTestUser && (
+                <button
+                  role="menuitemcheckbox"
+                  aria-checked={forceOnboarding}
+                  onClick={toggleOnboarding}
+                  title="Replay the onboarding sequence on every page load (test account only)"
+                  className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-emerald-500/10"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="w-5 text-center text-base leading-none" aria-hidden>
+                      🎬
+                    </span>
+                    Onboarding
+                  </span>
+                  <span className="opacity-50">{forceOnboarding ? 'on' : 'off'}</span>
+                </button>
+              )}
               <button
                 role="menuitem"
                 onClick={() => {
@@ -227,17 +389,17 @@ export function AthenaConsole() {
           className="px-4 py-3 space-y-2 overflow-y-auto"
           style={{ maxHeight: '34vh', minHeight: '18vh' }}
         >
-          {chat.messages.length === 0 && chat.ready && !arriving && (
+          {visibleMessages.length === 0 && chat.ready && !arriving && (
             <p className="text-center text-xs font-mono opacity-40 py-6">
               {voice.isSupported
                 ? 'Tap the mic or type to talk to Athena.'
                 : 'Type a message to talk to Athena.'}
             </p>
           )}
-          {chat.messages.map((m) => (
+          {visibleMessages.map((m) => (
             <div key={m.uuid} className={`flex ${m.is_human ? 'justify-end' : 'justify-start'}`}>
               <p
-                className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm leading-relaxed ${
+                className={`max-w-[85%] whitespace-pre-line rounded-2xl px-4 py-2 text-sm leading-relaxed ${
                   m.is_human
                     ? 'bg-emerald-500/20 text-emerald-50'
                     : 'bg-white/5 text-emerald-100'
@@ -278,7 +440,9 @@ export function AthenaConsole() {
               className={`shrink-0 h-12 w-12 rounded-full border text-lg grid place-items-center transition active:scale-95 ${
                 voice.listening
                   ? 'border-red-400 bg-red-500/20 text-red-200 animate-pulse'
-                  : 'border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10'
+                  : micPulsing
+                    ? 'border-emerald-400 text-emerald-100 ring-2 ring-emerald-400/40 animate-pulse'
+                    : 'border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10'
               }`}
             >
               {voice.listening ? '■' : '🎤'}
@@ -291,7 +455,13 @@ export function AthenaConsole() {
             id={inputId}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={voice.listening ? 'listening…' : 'Tell Athena…'}
+            placeholder={
+              voice.listening
+                ? 'listening…'
+                : onboardingStep === 'awaiting-user'
+                  ? 'Type, or tap the mic…'
+                  : 'Tell Athena…'
+            }
             autoComplete="off"
             className="flex-1 h-12 rounded-full bg-white/5 px-4 text-base outline-none placeholder:opacity-40 focus:bg-white/10"
           />

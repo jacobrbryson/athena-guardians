@@ -35,12 +35,21 @@ core_api/       ← MySQL, sessions, chat, guardians
 | ----------------- | ------------------------------------------------- | ------------------------ |
 | `/`               | Guardian ID entry → (glitch) → Guardian Secret    | Athena console           |
 | `/:guardian_id`   | Skips ID step; Secret entry with ID pre-filled    | Redirects to `/`         |
+| `/q/:token`       | Redeems a single-use QR token, then → Athena      | Redirects to `/`         |
 
 - **Guardian ID:** exactly 8 numeric digits.
 - **Guardian Secret:** exactly 6 alpha-numeric characters.
 - Invalid credentials always show the generic message
   `Guardian credentials not recognized.` — the UI and API never reveal which
   field was wrong.
+
+- **QR login (`/q/:token`):** a single-use, expiring token — **not** the
+  permanent secret, which never appears in a URL. It is issued out-of-band
+  (`core_api/db/issue-guardian-token.js`) and redeemed via
+  `POST /auth/guardian-qr-login` → `core_api POST /auth/guardian/redeem-token`,
+  which consumes it atomically (a second redeem fails). A spent/expired/unknown
+  token drops the Guardian to the manual gate. Mint one with:
+  `node db/issue-guardian-token.js <guardian_id> --base https://<guardians-host>`.
 
 ---
 

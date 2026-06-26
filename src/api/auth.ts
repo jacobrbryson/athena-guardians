@@ -20,6 +20,20 @@ export function guardianLogin(guardianId: string, guardianSecret: string) {
   );
 }
 
+export type TokenLoginResponse =
+  | { success: true; guardian: Guardian; is_first_login: boolean }
+  | { success: false; redirect_to_gate: true; guardian_id: string };
+
+/**
+ * Redeem a QR login token. Two outcomes:
+ *  - success: proxy sets the session cookie and returns the guardian identity.
+ *  - redirect_to_gate: the permanent QR was already used; caller should send
+ *    the player to /<guardian_id> to enter their secret instead.
+ */
+export function guardianTokenLogin(token: string) {
+  return api.post<TokenLoginResponse>('/auth/guardian-qr-login', { token });
+}
+
 /** Returns the current Guardian if the session cookie is valid, else throws 401. */
 export function fetchMe() {
   return api.get<{ success: boolean; guardian: Guardian }>('/auth/me');

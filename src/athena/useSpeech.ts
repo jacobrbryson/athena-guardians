@@ -29,6 +29,7 @@ const FEMALE_VOICE_NAMES = [
   'serena',
   'allison',
   'ava',
+  'emma',
   'susan',
   'zira', // Microsoft Zira
   'aria', // Microsoft Aria
@@ -38,16 +39,35 @@ const FEMALE_VOICE_NAMES = [
   'google uk english female',
 ];
 
-/** Choose the best available female English voice. */
+// Markers that identify high-quality neural voices, which sound far less
+// robotic than the legacy built-ins. On Windows the modern female voices are
+// named e.g. "Microsoft Aria Online (Natural) - English (United States)".
+const NATURAL_MARKERS = ['natural', 'online', 'neural'];
+
+/** Choose the best available female English voice, preferring neural voices. */
 function pickFemaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices.length) return null;
   const byName = (v: SpeechSynthesisVoice) => v.name.toLowerCase();
+  const isFemaleNamed = (v: SpeechSynthesisVoice) =>
+    FEMALE_VOICE_NAMES.some((n) => byName(v).includes(n));
+  const isNatural = (v: SpeechSynthesisVoice) =>
+    NATURAL_MARKERS.some((m) => byName(v).includes(m));
 
-  const named = voices.find((v) =>
-    FEMALE_VOICE_NAMES.some((n) => byName(v).includes(n))
+  // 1. A known female voice that is also a neural/"Natural" voice — best of both.
+  const naturalFemale = voices.find((v) => isFemaleNamed(v) && isNatural(v));
+  if (naturalFemale) return naturalFemale;
+
+  // 2. Any neural/"Natural" English voice (may be male, but sounds human).
+  const naturalEnglish = voices.find(
+    (v) => isNatural(v) && v.lang?.toLowerCase().startsWith('en')
   );
+  if (naturalEnglish) return naturalEnglish;
+
+  // 3. A known female voice name.
+  const named = voices.find(isFemaleNamed);
   if (named) return named;
 
+  // 4. Any voice flagged female, then any English voice.
   const flaggedFemale = voices.find((v) => byName(v).includes('female'));
   if (flaggedFemale) return flaggedFemale;
 
@@ -59,7 +79,13 @@ export interface Speech {
   isSupported: boolean;
   enabled: boolean;
   toggle: () => void;
-  speak: (text: string) => void;
+  /**
+   * Speak `text`. The optional `onEnd` callback fires when the utterance
+   * finishes — and also immediately when TTS is unsupported/disabled or the
+   * text is empty — so callers can sequence follow-up steps (e.g. asking a
+   * question after a greeting) regardless of whether voice is actually on.
+   */
+  speak: (text: string, onEnd?: () => void) => void;
   cancel: () => void;
 }
 
@@ -102,8 +128,23 @@ export function useSpeech(): Speech {
   }, [isSupported]);
 
   const speak = useCallback(
-    (text: string) => {
-      if (!isSupported || !enabledRef.current || !text?.trim()) return;
+    (text: string, onEnd?: () => void) => {
+      // Fire onEnd at most once, even if both onend and onerror arrive.
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        try {
+          onEnd?.();
+        } catch (err) {
+          console.warn('useSpeech: onEnd failed', err);
+        }
+      };
+
+      if (!isSupported || !enabledRef.current || !text?.trim()) {
+        finish();
+        return;
+      }
       try {
         const synth = window.speechSynthesis;
         synth.cancel(); // interrupt any in-progress utterance
@@ -112,12 +153,27 @@ export function useSpeech(): Speech {
           utter.voice = voiceRef.current;
           utter.lang = voiceRef.current.lang;
         }
-        utter.rate = 1;
+        utter.rate = 1.35; // noticeably faster than default for a more natural pace
         utter.pitch = 1.05; // a touch brighter
+        // Chrome fires onend before the audio buffer finishes draining.
+        // Poll speaking until truly silent so the next speak() call's
+        // synth.cancel() doesn't cut off the tail of this utterance.
+        utter.onend = () => {
+          const waitForSilence = () => {
+            if (window.speechSynthesis.speaking) {
+              window.setTimeout(waitForSilence, 50);
+            } else {
+              finish();
+            }
+          };
+          waitForSilence();
+        };
+        utter.onerror = finish;
         synth.speak(utter);
       } catch (err) {
         // Never let TTS failures break the chat flow.
         console.warn('useSpeech: speak failed', err);
+        finish();
       }
     },
     [isSupported]

@@ -7,7 +7,13 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { fetchMe, guardianLogin, guardianLogout, type Guardian } from '../api/auth';
+import {
+  fetchMe,
+  guardianLogin,
+  guardianLogout,
+  guardianTokenLogin,
+  type Guardian,
+} from '../api/auth';
 
 type AuthStatus = 'loading' | 'authenticated' | 'anonymous';
 
@@ -28,6 +34,8 @@ interface AuthContextValue {
   consumeArrival: () => void;
   /** Validate credentials; resolves the guardian on success. Throws otherwise. */
   login: (guardianId: string, secret: string) => Promise<Guardian>;
+  /** Redeem a single-use QR token; resolves the guardian on success. Throws otherwise. */
+  loginWithToken: (token: string) => Promise<Guardian>;
   logout: () => Promise<void>;
 }
 
@@ -65,6 +73,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return res.guardian;
   }, []);
 
+  const loginWithToken = useCallback(async (token: string) => {
+    const res = await guardianTokenLogin(token);
+    if (res.redirect_to_gate) {
+      const err = Object.assign(new Error('gate_redirect'), {
+        redirectGuardianId: res.guardian_id,
+      });
+      throw err;
+    }
+    setGuardian(res.guardian);
+    setArrival({ isFirstLogin: !!res.is_first_login });
+    setStatus('authenticated');
+    return res.guardian;
+  }, []);
+
   const consumeArrival = useCallback(() => setArrival(null), []);
 
   const logout = useCallback(async () => {
@@ -78,8 +100,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ status, guardian, arrival, consumeArrival, login, logout }),
-    [status, guardian, arrival, consumeArrival, login, logout]
+    () => ({ status, guardian, arrival, consumeArrival, login, loginWithToken, logout }),
+    [status, guardian, arrival, consumeArrival, login, loginWithToken, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
