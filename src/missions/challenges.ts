@@ -94,15 +94,14 @@ export const CHALLENGES: Challenge[] = [
   {
     id: 'c2-find-stars',
     kind: 'grid',
-    prompt: 'Select every square that hides a star.',
+    prompt: 'Select every square that contains a star.',
     rows: 3,
     cols: 3,
     multi: true,
-    // Stars at indices 0, 4, 8 (the diagonal). The rest are near-miss decoys
-    // (sparkles, glowing star) rather than blank tiles — a blank-vs-filled
-    // board makes the real star pop out instantly; decoys force an actual
-    // look. Swap for image tiles later for an even harder visual search.
-    cells: ['⭐', '✨', '✨', '🌟', '⭐', '✨', '🌟', '✨', '⭐'],
+    // Stars at indices 0, 4, 8 (the diagonal). Every correct tile uses the
+    // exact same monochrome star; decoys are unambiguously different shapes so
+    // children are never asked to judge whether a sparkle is also a star.
+    cells: ['★', '●', '◆', '▲', '★', '■', '⬢', '✚', '★'],
     correct: [0, 4, 8], // TODO author
   },
 

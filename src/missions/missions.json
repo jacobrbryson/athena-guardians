@@ -23,7 +23,7 @@
       "objective": "convergence",
       "incompleteNote": "Their corner is still encrypted — reach out so they can run the decryption.",
       "completeMessage": "Every corner recovered — the map is whole. The Guardians will gather at the place it reveals; bring your compass.",
-      "athenaDirective": "This Guardian is on the Decryption mission: you intercepted an encrypted message and need a human to help you decrypt it by passing a few quick \"bot check\" challenges in the Decryption console. Each family that finishes the challenges uncovers one corner of a map torn into four, and the gathering place only appears once all four families' corners are recovered. Encourage this Guardian to open the Decryption console and run the checks, then to rally the other families to do the same. If they ask, the challenges are simple human-verification puzzles (e.g. \"tap the yellow circle\"). Once the map is whole, tell them to use their compass to find the way from their own town."
+      "athenaDirective": "This Guardian is on the Decryption mission: you intercepted an encrypted message and need a human to help decrypt it through the Decryption console. Follow the current mission-phase instructions below so you reveal only what this Guardian has unlocked."
     }
   ]
 }

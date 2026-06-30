@@ -170,6 +170,7 @@ export function AthenaConsole() {
             priorAthenaLine: priorAthenaLineRef.current || '',
             firstContact: !!arrivalRef.current?.isFirstLogin,
           },
+          mission: missionSendRef.current,
         })
         .catch(() => undefined);
     },
@@ -396,23 +397,22 @@ export function AthenaConsole() {
         </div>
       </header>
 
-      {/* Current Mission — keeps Guardians on track (collapsed by default) */}
-      <CurrentMission state={missionState} guardianId={guardian!.guardian_id} />
-
       {/* Athena — large and front-and-center */}
-      <section className="relative flex-1 min-h-[42vh]">
+      <section className="relative min-h-0 flex-1">
         <UnityAthena
           sessionId={chat.sessionId}
           isThinking={chat.isThinking}
           onReady={onUnityReady}
         />
+        {/* Overlays Athena so mission details never shrink the Unity stage. */}
+        <CurrentMission state={missionState} guardianId={guardian!.guardian_id} />
         {arriving && (
           <SequenceOverlay messages={ARRIVAL_MESSAGES} tone="overlay" eyebrow="first contact" />
         )}
       </section>
 
       {/* Chat beneath Athena */}
-      <section className="flex flex-col border-t border-emerald-500/15 bg-black/95">
+      <section className="flex shrink-0 flex-col border-t border-emerald-500/15 bg-black/95">
         <div
           ref={logRef}
           className="px-4 py-3 space-y-2 overflow-y-auto"

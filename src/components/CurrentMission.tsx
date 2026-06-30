@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { MissionState } from '../missions/useMission';
 import type { MissionFamily, MissionStateResponse } from '../api/mission';
 import { DecryptionConsole } from './DecryptionConsole';
@@ -40,11 +40,27 @@ export function CurrentMission({
     total = state.convergence?.progress.total ?? 0;
     done = state.convergence?.progress.reported ?? 0;
   }
+  const awaitingOwnDecryption =
+    mission.objective === 'convergence' &&
+    state.convergence?.family.is_participant &&
+    !state.convergence.family.reported;
   const progress =
-    loading && total === 0 ? '…' : error ? '!' : `${done}/${total}`;
+    loading && total === 0
+      ? '…'
+      : error
+        ? '!'
+        : awaitingOwnDecryption
+          ? 'Encrypted'
+          : `${done}/${total}`;
 
   return (
-    <section className="border-b border-emerald-500/15 bg-black/95 text-emerald-50">
+    <section
+      className={`absolute inset-x-0 top-0 z-30 border-b text-emerald-50 transition-colors duration-300 ${
+        open
+          ? 'bottom-0 flex flex-col overflow-hidden border-emerald-200/20 bg-gradient-to-b from-black/70 to-black/45 shadow-2xl shadow-black/60 backdrop-blur-xl'
+          : 'border-emerald-500/15 bg-black/90 shadow-lg shadow-black/50 backdrop-blur-sm'
+      }`}
+    >
       <button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
@@ -54,7 +70,15 @@ export function CurrentMission({
           <span aria-hidden className="text-amber-300">
             ◆
           </span>
-          <span className="opacity-70">Current Mission</span>
+          <span
+            className={
+              open
+                ? 'opacity-70'
+                : 'animate-flicker text-amber-200 [text-shadow:0_0_8px_rgba(253,230,138,0.9)]'
+            }
+          >
+            Current Mission
+          </span>
           <span className="truncate opacity-90 normal-case tracking-normal font-semibold">
             {mission.title}
           </span>
@@ -70,8 +94,10 @@ export function CurrentMission({
       </button>
 
       {open && (
-        <div className="px-4 pb-3 pt-1 text-sm">
-          <p className="mb-3 text-xs leading-relaxed opacity-60">{mission.summary}</p>
+        <div className="min-h-0 flex-1 animate-missionSlide overflow-y-auto border-t border-white/5 px-4 pb-4 pt-2 text-sm">
+          {mission.objective !== 'convergence' && (
+            <p className="mb-3 text-xs leading-relaxed opacity-60">{mission.summary}</p>
+          )}
 
           {error && (
             <p className="py-2 text-xs text-amber-300">
@@ -261,6 +287,9 @@ function ConvergenceBody({
   const [consoleOpen, setConsoleOpen] = useState(false);
   const isTestUser = guardianId === TEST_GUARDIAN_ID;
   const [devPreview, setDevPreview] = useState(false);
+  const [transmissionPhase, setTransmissionPhase] = useState<
+    'incoming' | 'failed' | 'ready'
+  >('incoming');
 
   const { family, progress } = data;
   const solved = getSolvedCount(guardianId);
@@ -278,34 +307,86 @@ function ConvergenceBody({
     : progress.families;
   const recovered = families.filter((f) => f.reported).length;
   const complete = families.length > 0 && recovered === families.length;
+  const needsDecryption = family.is_participant && !family.reported;
+
+  useEffect(() => {
+    if (!needsDecryption) return;
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setTransmissionPhase('ready');
+      return;
+    }
+
+    const failedTimer = window.setTimeout(() => setTransmissionPhase('failed'), 1100);
+    const readyTimer = window.setTimeout(() => setTransmissionPhase('ready'), 2200);
+    return () => {
+      window.clearTimeout(failedTimer);
+      window.clearTimeout(readyTimer);
+    };
+  }, [needsDecryption]);
 
   return (
-    <div className="space-y-3">
-      {/* Your corner — earned by decrypting */}
-      {family.is_participant ? (
-        <div>
-          <p className="text-[11px] font-mono uppercase tracking-[0.2em] opacity-50">
-            Your corner of the map
-          </p>
-          {family.reported ? (
-            <div className="mt-1 flex items-center gap-2">
-              <span aria-hidden className="text-emerald-300">
-                ✓
-              </span>
-              <span className="text-xs text-emerald-300">
-                Decrypted — your corner is recovered.
-              </span>
-            </div>
-          ) : (
-            <button
-              onClick={() => setConsoleOpen(true)}
-              className="mt-2 rounded-full bg-emerald-500/80 px-4 py-1.5 text-xs font-semibold text-black active:scale-95"
+    <div className="space-y-4">
+      {needsDecryption ? (
+        <div className="mx-auto max-w-sm py-2 text-center">
+          <div className="relative mx-auto grid h-14 w-14 place-items-center">
+            <span
+              aria-hidden
+              className="absolute inset-0 rounded-full border border-amber-300/40 motion-safe:animate-ping"
+            />
+            <span
+              aria-hidden
+              className="grid h-12 w-12 place-items-center rounded-full border border-amber-300/60 bg-amber-300/10 text-2xl text-amber-200 shadow-[0_0_28px_rgba(253,230,138,0.3)] motion-safe:animate-pulse"
             >
-              {inProgress
-                ? `Resume decryption (${solved}/${CHALLENGE_COUNT})`
-                : 'Begin decryption'}
-            </button>
-          )}
+              ◈
+            </span>
+          </div>
+
+          <div className="mt-4 grid min-h-16 place-items-center" aria-live="polite">
+            {transmissionPhase === 'incoming' && (
+              <p className="animate-missionSignal font-mono text-sm uppercase tracking-[0.28em] text-amber-200">
+                Incoming Message<span className="animate-caret">...</span>
+              </p>
+            )}
+            {transmissionPhase === 'failed' && (
+              <p
+                data-text="MESSAGE DECRYPTION FAILED!"
+                className="gd-glitch animate-missionFail font-mono text-sm font-bold uppercase tracking-[0.2em] text-red-300 [text-shadow:0_0_10px_rgba(252,165,165,0.65)]"
+              >
+                Message Decryption Failed!
+              </p>
+            )}
+            {transmissionPhase === 'ready' && (
+              <div className="animate-missionReady">
+                <h2 className="text-lg font-semibold leading-snug text-emerald-50">
+                  Athena needs your help.
+                </h2>
+                <p className="mt-1 text-xs text-emerald-100/60">
+                  Pass the human check to decrypt the intercepted message.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => setConsoleOpen(true)}
+            className={`mt-4 w-full rounded-xl bg-amber-300 px-5 py-3.5 text-base font-bold text-black shadow-[0_0_28px_rgba(253,230,138,0.36)] transition duration-300 hover:bg-amber-200 active:scale-[0.98] ${
+              transmissionPhase === 'ready'
+                ? 'animate-missionCta opacity-100'
+                : 'pointer-events-none translate-y-2 opacity-0'
+            }`}
+            aria-hidden={transmissionPhase !== 'ready'}
+            tabIndex={transmissionPhase === 'ready' ? 0 : -1}
+          >
+            {inProgress
+              ? `Resume Decryption · ${solved}/${CHALLENGE_COUNT}`
+              : 'Decrypt Message for Athena'}
+          </button>
+        </div>
+      ) : family.is_participant ? (
+        <div className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+          <span aria-hidden>✓</span>
+          <span>Decrypted — your corner is recovered.</span>
         </div>
       ) : (
         <p className="text-xs leading-relaxed opacity-70">
@@ -314,9 +395,9 @@ function ConvergenceBody({
       )}
 
       {/* The torn map fills in as each family reports; the assembled map is the payoff. */}
-      {complete ? (
+      {!needsDecryption && complete ? (
         <CompletedMapReveal />
-      ) : (
+      ) : !needsDecryption ? (
         <div>
           <p className="text-[11px] font-mono uppercase tracking-[0.2em] opacity-50">
             The map, torn in four · {recovered}/{families.length}
@@ -334,7 +415,7 @@ function ConvergenceBody({
             </span>
           </p>
         </div>
-      )}
+      ) : null}
 
       {isTestUser && (
         <button

@@ -123,6 +123,7 @@ export function useMission(adventureKey: string | null | undefined): MissionStat
           total: convergence.progress.total,
           pending: pendingNames,
         },
+        decrypted: convergence.family.reported,
         complete,
         destination:
           complete && convergence.convergence

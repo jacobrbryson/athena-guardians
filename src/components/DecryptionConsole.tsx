@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CHALLENGES,
   CHALLENGE_COUNT,
@@ -23,6 +24,13 @@ function randomGlitchString(length: number): string {
 /** How long a fragment "decodes" for before settling — randomized each time. */
 const DECODE_MIN_MS = 1000;
 const DECODE_MAX_MS = 2600;
+const CHOICE_DECRYPT_MS = 480;
+
+function choiceDecryptDelay(): number {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ? 0
+    : CHOICE_DECRYPT_MS;
+}
 
 /**
  * Full-screen "decryption console" — the bot-check experience.
@@ -107,7 +115,7 @@ export function DecryptionConsole({
     timersRef.current = { interval, timeout };
   }, [solved, advance]);
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col bg-black text-emerald-50">
       {/* Header */}
       <header className="flex items-center justify-between border-b border-emerald-500/20 px-4 py-3">
@@ -150,7 +158,8 @@ export function DecryptionConsole({
           />
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -303,25 +312,73 @@ function ChoiceTile({
   onClick: () => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
+  const [attempting, setAttempting] = useState(false);
+  const attemptTimerRef = useRef<number | null>(null);
   const showImage = !!option.image && !imgFailed;
+
+  useEffect(
+    () => () => {
+      if (attemptTimerRef.current !== null) window.clearTimeout(attemptTimerRef.current);
+    },
+    []
+  );
+
+  const attemptDecrypt = () => {
+    if (attempting) return;
+    setAttempting(true);
+    attemptTimerRef.current = window.setTimeout(() => {
+      attemptTimerRef.current = null;
+      setAttempting(false);
+      onClick();
+    }, choiceDecryptDelay());
+  };
+
   return (
     <button
-      onClick={onClick}
-      className="grid aspect-square place-items-center overflow-hidden rounded-2xl border border-emerald-500/30 bg-white/5 text-5xl transition active:scale-95 hover:bg-emerald-500/10"
+      onClick={attemptDecrypt}
+      disabled={attempting}
+      className="relative grid aspect-square place-items-center overflow-hidden rounded-2xl border border-emerald-500/30 bg-white/5 text-5xl transition active:scale-95 hover:bg-emerald-500/10 disabled:opacity-100"
     >
-      {showImage && (
-        <img
-          src={option.image}
-          alt=""
-          className="h-full w-full object-cover"
-          onError={() => setImgFailed(true)}
-        />
-      )}
-      {/* Fallback label — shown whenever there's no image, or it failed to load. */}
-      <span className={showImage ? 'sr-only' : ''} aria-hidden={showImage}>
-        {option.label}
+      <span
+        className={`absolute inset-0 grid place-items-center transition-opacity ${
+          attempting ? 'opacity-35' : 'opacity-100'
+        }`}
+      >
+        {showImage && (
+          <img
+            src={option.image}
+            alt=""
+            className="h-full w-full object-cover"
+            onError={() => setImgFailed(true)}
+          />
+        )}
+        {/* Fallback label — shown whenever there's no image, or it failed to load. */}
+        <span className={showImage ? 'sr-only' : ''} aria-hidden={showImage}>
+          {option.label}
+        </span>
       </span>
+      {attempting && <DecryptAttemptOverlay />}
     </button>
+  );
+}
+
+/** Shared tap feedback: every candidate visibly attempts decryption before evaluation. */
+function DecryptAttemptOverlay() {
+  return (
+    <span className="absolute inset-0 z-10 grid animate-decryptAttempt place-items-center overflow-hidden bg-black/70 font-mono text-emerald-200">
+      <span
+        aria-hidden
+        data-text="▓▒░ DECRYPTING ░▒▓"
+        className="gd-glitch animate-glitchShift text-[10px] font-bold tracking-[0.12em]"
+      >
+        ▓▒░ DECRYPTING ░▒▓
+      </span>
+      <span
+        aria-hidden
+        className="absolute inset-x-0 h-px animate-decryptScan bg-emerald-200 shadow-[0_0_10px_rgba(167,243,208,0.9)]"
+      />
+      <span className="sr-only">Attempting to decrypt choice</span>
+    </span>
   );
 }
 
@@ -352,11 +409,20 @@ function GridBoard({
   const total = rows * cols;
   // Selection state: a set for multi, an ordered list for sequence taps.
   const [selected, setSelected] = useState<number[]>([]);
+  const [attemptingCell, setAttemptingCell] = useState<number | null>(null);
+  const attemptTimerRef = useRef<number | null>(null);
 
   const correctSet = useMemo(() => new Set(correct), [correct]);
   const reset = () => setSelected([]);
 
-  const handleTile = (i: number) => {
+  useEffect(
+    () => () => {
+      if (attemptTimerRef.current !== null) window.clearTimeout(attemptTimerRef.current);
+    },
+    []
+  );
+
+  const evaluateTile = (i: number) => {
     if (ordered) {
       // Each tap must continue the correct sequence; a wrong tap resets.
       const nextIndex = selected.length;
@@ -381,6 +447,16 @@ function GridBoard({
     // Single-pick: the tap is the answer.
     if (correctSet.has(i)) onCorrect();
     else onWrong();
+  };
+
+  const handleTile = (i: number) => {
+    if (attemptingCell !== null) return;
+    setAttemptingCell(i);
+    attemptTimerRef.current = window.setTimeout(() => {
+      attemptTimerRef.current = null;
+      setAttemptingCell(null);
+      evaluateTile(i);
+    }, choiceDecryptDelay());
   };
 
   const verifyMulti = () => {
@@ -409,7 +485,8 @@ function GridBoard({
               key={i}
               onClick={() => handleTile(i)}
               aria-pressed={isSelected}
-              className={`relative grid aspect-square place-items-center overflow-hidden rounded-xl border bg-white/5 text-3xl transition active:scale-95 ${
+              disabled={attemptingCell !== null}
+              className={`relative grid aspect-square place-items-center overflow-hidden rounded-xl border bg-white/5 text-3xl transition active:scale-95 disabled:opacity-100 ${
                 isSelected
                   ? 'border-emerald-400 ring-2 ring-emerald-400/60'
                   : 'border-emerald-500/30 hover:bg-emerald-500/10'
@@ -425,6 +502,7 @@ function GridBoard({
               {multi && isSelected && (
                 <span className="absolute right-1 top-1 text-emerald-300">✓</span>
               )}
+              {attemptingCell === i && <DecryptAttemptOverlay />}
             </button>
           );
         })}

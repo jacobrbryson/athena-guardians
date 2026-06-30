@@ -111,7 +111,14 @@ body {
   .gd-glitch::after,
   .gd-sweep::after,
   .animate-flicker,
-  .animate-glitchShift {
+  .animate-glitchShift,
+  .animate-missionSlide,
+  .animate-missionSignal,
+  .animate-missionFail,
+  .animate-missionReady,
+  .animate-missionCta,
+  .animate-decryptAttempt,
+  .animate-decryptScan {
     animation: none !important;
   }
 }

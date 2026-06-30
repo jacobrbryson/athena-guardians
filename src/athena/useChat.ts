@@ -48,6 +48,8 @@ export interface MissionContext {
   reporting?: { reported: number; total: number; pending?: string[] };
   /** convergence: whether every family has reported. */
   complete?: boolean;
+  /** convergence: whether this Guardian has completed the decryption. */
+  decrypted?: boolean;
   /** convergence: the revealed gathering point (once complete). */
   destination?: string;
 }
