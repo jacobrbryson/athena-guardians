@@ -34,8 +34,27 @@ export interface OnboardingContext {
   firstContact: boolean;
 }
 
+/** Active-mission steering, sent so Athena can nudge toward the objective. */
+export interface MissionContext {
+  /** Mission id, so the backend can attribute an in-chat report. */
+  id?: string;
+  title?: string;
+  directive: string;
+  /** family_onboarding: names (with regions) of families still to make contact. */
+  pendingFamilies?: string[];
+  /** convergence: the piece this family holds. */
+  fragment?: string;
+  /** convergence: how many families have reported in. */
+  reporting?: { reported: number; total: number; pending?: string[] };
+  /** convergence: whether every family has reported. */
+  complete?: boolean;
+  /** convergence: the revealed gathering point (once complete). */
+  destination?: string;
+}
+
 export interface SendOptions {
   onboarding?: OnboardingContext;
+  mission?: MissionContext;
 }
 
 export interface ChatState {
@@ -183,6 +202,7 @@ export function useChat(guardianId: string, guardian?: GuardianContext): ChatSta
     // onboarding exchange, give the AI the line she just said + first/returning.
     if (guardianRef.current) body.guardian = guardianRef.current;
     if (opts?.onboarding) body.onboarding = opts.onboarding;
+    if (opts?.mission) body.mission = opts.mission;
 
     setIsThinking(true);
     try {

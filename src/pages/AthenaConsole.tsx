@@ -5,6 +5,9 @@ import { useVoiceInput } from '../athena/useVoiceInput';
 import { useSpeech } from '../athena/useSpeech';
 import { UnityAthena, type AthenaBridge } from '../athena/UnityAthena';
 import { SequenceOverlay } from '../components/SequenceOverlay';
+import { CurrentMission } from '../components/CurrentMission';
+import { useMission } from '../missions/useMission';
+import type { MissionContext } from '../athena/useChat';
 import {
   ARRIVAL_MESSAGES,
   buildGreeting,
@@ -37,6 +40,12 @@ export function AthenaConsole() {
     adventure_key: guardian!.adventure_key,
   });
   const tts = useSpeech();
+
+  // Current mission + live family onboarding status. Drives the "Current
+  // Mission" panel and Athena's steering toward the active objective.
+  const missionState = useMission(guardian!.adventure_key);
+  const missionSendRef = useRef<MissionContext | undefined>(undefined);
+  missionSendRef.current = missionState.chatContext;
 
   const [draft, setDraft] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -178,7 +187,10 @@ export function AthenaConsole() {
         completeOnboarding(trimmed);
         return;
       }
-      void chat.sendMessage(trimmed).catch(() => undefined);
+      const mission = missionSendRef.current;
+      void chat
+        .sendMessage(trimmed, mission ? { mission } : undefined)
+        .catch(() => undefined);
     },
     [chat, completeOnboarding]
   );
@@ -246,6 +258,20 @@ export function AthenaConsole() {
     spokenRef.current = last.uuid;
     tts.speak(last.text);
   }, [chat.messages, chat.ready, tts]);
+
+  // In-chat mission reporting: a Guardian can report their piece by telling
+  // Athena, which the backend records during her reply. When a new Athena
+  // message arrives during a convergence mission, refresh so the panel reflects
+  // any contribution that turn may have recorded.
+  const missionRefreshSeenRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (missionState.mission?.objective !== 'convergence') return;
+    const last = chat.messages[chat.messages.length - 1];
+    if (!last || last.is_human) return;
+    if (missionRefreshSeenRef.current === last.uuid) return;
+    missionRefreshSeenRef.current = last.uuid;
+    missionState.refresh();
+  }, [chat.messages, missionState]);
 
   // Keep the transcript pinned to the latest message.
   useEffect(() => {
@@ -369,6 +395,9 @@ export function AthenaConsole() {
           )}
         </div>
       </header>
+
+      {/* Current Mission — keeps Guardians on track (collapsed by default) */}
+      <CurrentMission state={missionState} guardianId={guardian!.guardian_id} />
 
       {/* Athena — large and front-and-center */}
       <section className="relative flex-1 min-h-[42vh]">

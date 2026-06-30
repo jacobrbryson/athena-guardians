@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "missions": [
+    {
+      "id": "mission-0-check-in",
+      "order": 0,
+      "status": "complete",
+      "adventureKeys": ["lake_norman_guardians"],
+      "title": "Just Get Everyone to Check In",
+      "summary": "Get at least one Guardian from every family to check in with Athena.",
+      "objective": "family_onboarding",
+      "incompleteNote": "Reach out and invite them to check in with Athena.",
+      "completeMessage": "Every family has checked in. The Guardian Network is awake.",
+      "athenaDirective": "This Guardian is on Mission 0: at least one Guardian from every family needs to check in with Athena. Warmly and naturally encourage this Guardian to reach out to the other Guardians — especially the families who haven't checked in yet — and invite them to log in and meet you."
+    },
+    {
+      "id": "mission-2-convergence",
+      "order": 2,
+      "status": "active",
+      "adventureKeys": ["lake_norman_guardians"],
+      "title": "Decryption",
+      "summary": "Athena intercepted an encrypted message. Help her decrypt it — prove you're human — and your family will uncover its corner of a map torn in four.",
+      "objective": "convergence",
+      "incompleteNote": "Their corner is still encrypted — reach out so they can run the decryption.",
+      "completeMessage": "Every corner recovered — the map is whole. The Guardians will gather at the place it reveals; bring your compass.",
+      "athenaDirective": "This Guardian is on the Decryption mission: you intercepted an encrypted message and need a human to help you decrypt it by passing a few quick \"bot check\" challenges in the Decryption console. Each family that finishes the challenges uncovers one corner of a map torn into four, and the gathering place only appears once all four families' corners are recovered. Encourage this Guardian to open the Decryption console and run the checks, then to rally the other families to do the same. If they ask, the challenges are simple human-verification puzzles (e.g. \"tap the yellow circle\"). Once the map is whole, tell them to use their compass to find the way from their own town."
+    }
+  ]
+}
