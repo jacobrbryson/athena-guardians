@@ -9,6 +9,7 @@ import {
   type GridChallenge,
 } from '../missions/challenges';
 import { getSolvedCount, setSolvedCount } from '../missions/decryptionProgress';
+import { useDecodeSound } from '../missions/useDecodeSound';
 
 /** Glyphs used to scramble a fragment while it's "decoding". */
 const GLITCH_CHARS = '#@$%&*▓▒░01∆µ¬§∞∂≠≈Ωπ¥£¢XYZ?!/\\<>{}[]'.split('');
@@ -68,12 +69,14 @@ export function DecryptionConsole({
   // in the transmission strip while it runs.
   const [decoding, setDecoding] = useState(false);
   const [glitchText, setGlitchText] = useState('');
-  const timersRef = useRef<{ interval?: number; timeout?: number }>({});
+  const timersRef = useRef<{ interval?: number; timeout?: number; stopSound?: () => void }>({});
+  const sound = useDecodeSound();
 
   useEffect(
     () => () => {
       if (timersRef.current.interval) window.clearInterval(timersRef.current.interval);
       if (timersRef.current.timeout) window.clearTimeout(timersRef.current.timeout);
+      timersRef.current.stopSound?.();
     },
     []
   );
@@ -85,12 +88,13 @@ export function DecryptionConsole({
       setSolvedCount(guardianId, next);
       if (next >= CHALLENGE_COUNT && !completedRef.current) {
         completedRef.current = true;
+        sound.playComplete();
         // Record the family's piece. Fire-and-forget; the panel refreshes state.
         void Promise.resolve(onComplete()).catch(() => undefined);
       }
       return next;
     });
-  }, [guardianId, onComplete]);
+  }, [guardianId, onComplete, sound]);
 
   // A challenge was just solved: scramble its fragment for a random stretch
   // before revealing the clear text and moving on (or completing).
@@ -106,14 +110,17 @@ export function DecryptionConsole({
     const interval = window.setInterval(() => {
       setGlitchText(randomGlitchString(len));
     }, 55);
+    const stopSound = sound.startDecodingLoop();
     const duration = DECODE_MIN_MS + Math.random() * (DECODE_MAX_MS - DECODE_MIN_MS);
     const timeout = window.setTimeout(() => {
       window.clearInterval(interval);
+      stopSound();
       setDecoding(false);
+      sound.playSolved();
       advance();
     }, duration);
-    timersRef.current = { interval, timeout };
-  }, [solved, advance]);
+    timersRef.current = { interval, timeout, stopSound };
+  }, [solved, advance, sound]);
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col bg-black text-emerald-50">
