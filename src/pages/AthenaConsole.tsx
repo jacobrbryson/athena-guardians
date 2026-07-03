@@ -219,7 +219,7 @@ export function AthenaConsole() {
     );
     sayAthena(greeting, () => window.setTimeout(deliverOnboardingPrompt, 1500));
 
-    // Safety net: if the TTS end callback never fires (flaky speechSynthesis),
+    // Safety net: if speech generation/playback never reports completion,
     // still open the conversation. The guard makes this idempotent.
     window.setTimeout(deliverOnboardingPrompt, 9000);
   }, [guardian, sayAthena, deliverOnboardingPrompt]);
@@ -242,8 +242,9 @@ export function AthenaConsole() {
 
   const onUnityReady = useCallback((bridge: AthenaBridge) => {
     bridgeRef.current = bridge;
+    tts.attachUnity(bridge);
     setUnityReady(true);
-  }, []);
+  }, [tts]);
 
   // Speak Athena's newest reply (TTS on by default) — but never replay history.
   useEffect(() => {
@@ -260,15 +261,12 @@ export function AthenaConsole() {
     tts.speak(last.text);
   }, [chat.messages, chat.ready, tts]);
 
-  // In-chat mission reporting: a Guardian can report their piece by telling
-  // Athena, which the backend records during her reply. When a new Athena
-  // message arrives during a convergence mission, refresh so the panel reflects
-  // any contribution that turn may have recorded.
+  // Mission transitions happen from chat messages on the backend. Refresh after
+  // each new persisted turn so PORTICO and the final cipher update the panel.
   const missionRefreshSeenRef = useRef<string | null>(null);
   useEffect(() => {
-    if (missionState.mission?.objective !== 'convergence') return;
     const last = chat.messages[chat.messages.length - 1];
-    if (!last || last.is_human) return;
+    if (!last?.uuid || last.uuid.startsWith('local-')) return;
     if (missionRefreshSeenRef.current === last.uuid) return;
     missionRefreshSeenRef.current = last.uuid;
     missionState.refresh();
@@ -405,7 +403,7 @@ export function AthenaConsole() {
           onReady={onUnityReady}
         />
         {/* Overlays Athena so mission details never shrink the Unity stage. */}
-        <CurrentMission state={missionState} guardianId={guardian!.guardian_id} />
+        <CurrentMission state={missionState} />
         {arriving && (
           <SequenceOverlay messages={ARRIVAL_MESSAGES} tone="overlay" eyebrow="first contact" />
         )}

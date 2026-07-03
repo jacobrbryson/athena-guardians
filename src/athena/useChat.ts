@@ -40,6 +40,8 @@ export interface MissionContext {
   id?: string;
   title?: string;
   directive: string;
+  /** Persistent server-owned mission phase. */
+  phase?: 'check_in' | 'active' | 'decrypting';
   /** family_onboarding: names (with regions) of families still to make contact. */
   pendingFamilies?: string[];
   /** convergence: the piece this family holds. */
@@ -208,9 +210,23 @@ export function useChat(guardianId: string, guardian?: GuardianContext): ChatSta
 
     setIsThinking(true);
     try {
-      const res = await api.post<{ message?: Message }>('/api/v1/message', body);
+      const res = await api.post<{ message?: Partial<Message> }>('/api/v1/message', body);
       if (res?.message) {
-        setMessages((prev) => [...prev, res.message as Message]);
+        const message = res.message;
+        if (typeof message.text === 'string' && typeof message.is_human === 'boolean') {
+          setMessages((prev) => [
+            ...prev,
+            {
+              uuid:
+                typeof message.uuid === 'string' && message.uuid
+                  ? message.uuid
+                  : `local-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              is_human: message.is_human,
+              text: message.text,
+              created_at: message.created_at,
+            },
+          ]);
+        }
       }
     } catch (err) {
       setIsThinking(false);

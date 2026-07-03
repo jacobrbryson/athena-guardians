@@ -1,29 +1,29 @@
 {
-  "version": 1,
+  "version": 2,
   "missions": [
     {
       "id": "mission-0-check-in",
       "order": 0,
-      "status": "complete",
+      "status": "active",
       "adventureKeys": ["lake_norman_guardians"],
-      "title": "Just Get Everyone to Check In",
+      "title": "Gather the Guardians",
       "summary": "Get at least one Guardian from every family to check in with Athena.",
       "objective": "family_onboarding",
       "incompleteNote": "Reach out and invite them to check in with Athena.",
       "completeMessage": "Every family has checked in. The Guardian Network is awake.",
-      "athenaDirective": "This Guardian is on Mission 0: at least one Guardian from every family needs to check in with Athena. Warmly and naturally encourage this Guardian to reach out to the other Guardians — especially the families who haven't checked in yet — and invite them to log in and meet you."
+      "athenaDirective": "Help the remaining Guardian families make first contact with Athena."
     },
     {
-      "id": "mission-2-convergence",
+      "id": "mission-2-portico",
       "order": 2,
-      "status": "active",
+      "status": "locked",
       "adventureKeys": ["lake_norman_guardians"],
-      "title": "Decryption",
-      "summary": "Athena intercepted an encrypted message. Help her decrypt it — prove you're human — and your family will uncover its corner of a map torn in four.",
-      "objective": "convergence",
-      "incompleteNote": "Their corner is still encrypted — reach out so they can run the decryption.",
-      "completeMessage": "Every corner recovered — the map is whole. The Guardians will gather at the place it reveals; bring your compass.",
-      "athenaDirective": "This Guardian is on the Decryption mission: you intercepted an encrypted message and need a human to help decrypt it through the Decryption console. Follow the current mission-phase instructions below so you reveal only what this Guardian has unlocked."
+      "title": "The Portico Signal",
+      "summary": "A Guardian-marked field signal has been recovered. Investigate it and report discoveries to Athena.",
+      "objective": "field_mission",
+      "incompleteNote": "Continue investigating the recovered signal.",
+      "completeMessage": "Athena is decrypting the recovered message. Check back later.",
+      "athenaDirective": "Guide the Guardians through the recovered field clue without solving it for them."
     }
   ]
 }
