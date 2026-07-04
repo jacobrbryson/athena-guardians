@@ -7,7 +7,9 @@ import { UnityAthena, type AthenaBridge } from '../athena/UnityAthena';
 import { SequenceOverlay } from '../components/SequenceOverlay';
 import { CurrentMission } from '../components/CurrentMission';
 import { useMission } from '../missions/useMission';
-import type { MissionContext } from '../athena/useChat';
+import { SignalDecoder } from '../decode/SignalDecoder';
+import { getSignalsDecoded } from '../decode/decodeStats';
+import type { MissionContext, SendOptions } from '../athena/useChat';
 import {
   ARRIVAL_MESSAGES,
   buildGreeting,
@@ -46,6 +48,16 @@ export function AthenaConsole() {
   const missionState = useMission(guardian!.adventure_key);
   const missionSendRef = useRef<MissionContext | undefined>(undefined);
   missionSendRef.current = missionState.chatContext;
+
+  // Signal Decoder — the repeatable "help Athena decode signals" side activity.
+  // Always available once Mission 1 (family check-in) is behind them. The
+  // lifetime count rides along with every chat message so Athena knows.
+  const [decoderOpen, setDecoderOpen] = useState(false);
+  const decoderAvailable = !!missionState.phase && missionState.phase !== 'check_in';
+  const decodesContext = useCallback((): SendOptions['decodes'] => {
+    const total = getSignalsDecoded(guardian!.guardian_id);
+    return total > 0 ? { total } : undefined;
+  }, [guardian]);
 
   const [draft, setDraft] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -171,10 +183,11 @@ export function AthenaConsole() {
             firstContact: !!arrivalRef.current?.isFirstLogin,
           },
           mission: missionSendRef.current,
+          decodes: decodesContext(),
         })
         .catch(() => undefined);
     },
-    [chat, setStep]
+    [chat, setStep, decodesContext]
   );
 
   // Single entry point for user input from both the composer and voice. During
@@ -188,12 +201,14 @@ export function AthenaConsole() {
         completeOnboarding(trimmed);
         return;
       }
-      const mission = missionSendRef.current;
       void chat
-        .sendMessage(trimmed, mission ? { mission } : undefined)
+        .sendMessage(trimmed, {
+          mission: missionSendRef.current,
+          decodes: decodesContext(),
+        })
         .catch(() => undefined);
     },
-    [chat, completeOnboarding]
+    [chat, completeOnboarding, decodesContext]
   );
 
   // Voice: hands-free — a final transcript is handled immediately.
@@ -404,10 +419,27 @@ export function AthenaConsole() {
         />
         {/* Overlays Athena so mission details never shrink the Unity stage. */}
         <CurrentMission state={missionState} />
+        {/* Signal Decoder launcher — the always-on side activity once Mission 1 is done. */}
+        {decoderAvailable && !arriving && (
+          <button
+            onClick={() => setDecoderOpen(true)}
+            className="absolute bottom-3 right-3 z-20 flex items-center gap-2 rounded-full border border-cyan-400/40 bg-black/80 px-4 py-2 text-[11px] font-mono uppercase tracking-[0.2em] text-cyan-200 shadow-lg shadow-black/50 backdrop-blur-sm transition hover:bg-cyan-500/10 active:scale-95"
+          >
+            <span aria-hidden className="animate-pulse">📡</span>
+            Decode signals
+          </button>
+        )}
         {arriving && (
           <SequenceOverlay messages={ARRIVAL_MESSAGES} tone="overlay" eyebrow="first contact" />
         )}
       </section>
+
+      {decoderOpen && (
+        <SignalDecoder
+          guardianId={guardian!.guardian_id}
+          onClose={() => setDecoderOpen(false)}
+        />
+      )}
 
       {/* Chat beneath Athena */}
       <section className="flex shrink-0 flex-col border-t border-emerald-500/15 bg-black/95">

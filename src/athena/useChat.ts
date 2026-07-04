@@ -56,9 +56,15 @@ export interface MissionContext {
   destination?: string;
 }
 
+/** Signal Decoder flavor stat: lifetime signals decoded, so Athena knows. */
+export interface DecodeContext {
+  total: number;
+}
+
 export interface SendOptions {
   onboarding?: OnboardingContext;
   mission?: MissionContext;
+  decodes?: DecodeContext;
 }
 
 export interface ChatState {
@@ -207,6 +213,7 @@ export function useChat(guardianId: string, guardian?: GuardianContext): ChatSta
     if (guardianRef.current) body.guardian = guardianRef.current;
     if (opts?.onboarding) body.onboarding = opts.onboarding;
     if (opts?.mission) body.mission = opts.mission;
+    if (opts?.decodes && opts.decodes.total > 0) body.decodes = opts.decodes;
 
     setIsThinking(true);
     try {
