@@ -9,7 +9,8 @@ import { CurrentMission } from '../components/CurrentMission';
 import { useMission } from '../missions/useMission';
 import { SignalDecoder } from '../decode/SignalDecoder';
 import { getSignalsDecoded } from '../decode/decodeStats';
-import type { MissionContext, SendOptions } from '../athena/useChat';
+import type { Message, MissionContext, SendOptions } from '../athena/useChat';
+import type { PreparedSpeech } from '../athena/useSpeech';
 import {
   ARRIVAL_MESSAGES,
   buildGreeting,
@@ -35,13 +36,45 @@ const ADVENTURE_LABELS: Record<string, string> = {
 const ARRIVAL_MIN_MS = 2600; // minimum time the arrival sequence is shown
 const ARRIVAL_MAX_MS = 14000; // safety cap if Unity stalls/fails to load
 
+// Voice sync: Athena's text stays hidden (still "thinking") while her voice is
+// generated, so the reveal and the audio start together. This caps how much
+// extra thinking time the voice may add — past it, the text shows anyway and
+// the audio joins whenever it lands (the old, out-of-sync behavior). Neural
+// generation regularly takes 10-15s, so the cap sits well above that; per
+// the product call, a longer "thinking" beat is preferred over a desynced
+// reveal.
+const MAX_VOICE_HOLD_MS = 20000;
+
 export function AthenaConsole() {
   const { guardian, logout, arrival, consumeArrival } = useAuth();
-  const chat = useChat(guardian!.guardian_id, {
-    display_name: guardian!.display_name,
-    adventure_key: guardian!.adventure_key,
-  });
   const tts = useSpeech();
+  const ttsRef = useRef(tts);
+  ttsRef.current = tts;
+
+  // Voice-sync gate handed to useChat: start generating the voice for an
+  // incoming Athena message and hold the reveal until it is ready (or the cap
+  // expires). The prepared audio is stashed by message uuid so the reveal
+  // effect below can start playback the instant the text appears.
+  const preparedSpeechRef = useRef(new Map<string, PreparedSpeech>());
+  const holdForVoice = useCallback(async (message: Message) => {
+    const speech = ttsRef.current;
+    if (!speech.enabled || !speech.isSupported || !message.text?.trim()) return;
+    const prepared = speech.prepare(message.text);
+    preparedSpeechRef.current.set(message.uuid, prepared);
+    await Promise.race([
+      prepared.ready,
+      new Promise((resolve) => window.setTimeout(resolve, MAX_VOICE_HOLD_MS)),
+    ]);
+  }, []);
+
+  const chat = useChat(
+    guardian!.guardian_id,
+    {
+      display_name: guardian!.display_name,
+      adventure_key: guardian!.adventure_key,
+    },
+    { onBeforeAthenaMessage: holdForVoice }
+  );
 
   // Current mission + live family onboarding status. Drives the "Current
   // Mission" panel and Athena's steering toward the active objective.
@@ -139,18 +172,40 @@ export function AthenaConsole() {
   }, []);
 
   // Inject + speak one of Athena's onboarding lines, pre-marking it spoken so
-  // the message-watching TTS effect doesn't say it a second time.
+  // the message-watching TTS effect doesn't say it a second time. Like live
+  // replies, the text is held until the voice is ready (capped) so both start
+  // together.
   const sayAthena = useCallback(
     (text: string, onEnd?: () => void) => {
-      const uuid = chat.injectAthenaMessage(text);
-      if (uuid) {
-        spokenRef.current = uuid;
-        tts.speak(text, onEnd);
-      } else {
+      const speech = ttsRef.current;
+      if (!text?.trim()) {
         onEnd?.();
+        return;
       }
+      if (!speech.enabled || !speech.isSupported) {
+        const uuid = chat.injectAthenaMessage(text);
+        if (uuid) spokenRef.current = uuid;
+        onEnd?.();
+        return;
+      }
+
+      const prepared = speech.prepare(text);
+      let revealed = false;
+      const reveal = () => {
+        if (revealed) return;
+        revealed = true;
+        const uuid = chat.injectAthenaMessage(text);
+        if (uuid) spokenRef.current = uuid;
+      };
+      const holdTimer = window.setTimeout(reveal, MAX_VOICE_HOLD_MS);
+      void prepared.ready.then((ok) => {
+        window.clearTimeout(holdTimer);
+        reveal();
+        if (ok) prepared.play(onEnd);
+        else onEnd?.();
+      });
     },
-    [chat, tts]
+    [chat]
   );
 
   // Athena initiates the conversation: new Guardians get a "communication
@@ -235,8 +290,9 @@ export function AthenaConsole() {
     sayAthena(greeting, () => window.setTimeout(deliverOnboardingPrompt, 1500));
 
     // Safety net: if speech generation/playback never reports completion,
-    // still open the conversation. The guard makes this idempotent.
-    window.setTimeout(deliverOnboardingPrompt, 9000);
+    // still open the conversation. The guard makes this idempotent. Sized past
+    // MAX_VOICE_HOLD_MS so it can't fire before the greeting text has appeared.
+    window.setTimeout(deliverOnboardingPrompt, MAX_VOICE_HOLD_MS + 6000);
   }, [guardian, sayAthena, deliverOnboardingPrompt]);
 
   // Arrival timers: hold for a minimum, give up after a max.
@@ -262,6 +318,9 @@ export function AthenaConsole() {
   }, [tts]);
 
   // Speak Athena's newest reply (TTS on by default) — but never replay history.
+  // Replies that came through the voice-sync gate already have their audio
+  // prepared, so playback starts the same instant the text appears; anything
+  // else (gate off at arrival time) falls back to the fire-and-forget speak.
   useEffect(() => {
     if (!chat.ready) return;
     const last = chat.messages[chat.messages.length - 1];
@@ -273,7 +332,16 @@ export function AthenaConsole() {
     }
     if (!last || last.is_human || spokenRef.current === last.uuid) return;
     spokenRef.current = last.uuid;
-    tts.speak(last.text);
+    const prepared = preparedSpeechRef.current.get(last.uuid);
+    if (prepared) {
+      preparedSpeechRef.current.delete(last.uuid);
+      // Instant when generation beat the hold cap; late (old behavior) if not.
+      void prepared.ready.then((ok) => {
+        if (ok) prepared.play();
+      });
+    } else {
+      tts.speak(last.text);
+    }
   }, [chat.messages, chat.ready, tts]);
 
   // Mission transitions happen from chat messages on the backend. Refresh after
@@ -336,8 +404,19 @@ export function AthenaConsole() {
         <div className="flex items-center gap-2 min-w-0">
           <span
             className={`inline-block h-2 w-2 rounded-full ${
-              chat.wsConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
+              chat.wsConnected
+                ? 'bg-emerald-400'
+                : chat.connected
+                  ? 'bg-amber-400'
+                  : 'bg-amber-400 animate-pulse'
             }`}
+            title={
+              chat.wsConnected
+                ? 'Live link'
+                : chat.connected
+                  ? 'Backup link — reconnecting'
+                  : 'Connecting…'
+            }
             aria-hidden
           />
           <span className="truncate opacity-70">

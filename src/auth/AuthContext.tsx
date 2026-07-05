@@ -75,7 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginWithToken = useCallback(async (token: string) => {
     const res = await guardianTokenLogin(token);
-    if (res.redirect_to_gate) {
+    if (!res.success) {
       const err = Object.assign(new Error('gate_redirect'), {
         redirectGuardianId: res.guardian_id,
       });
