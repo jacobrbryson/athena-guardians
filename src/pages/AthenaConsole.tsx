@@ -16,8 +16,11 @@ import {
   buildGreeting,
   NEW_GUARDIAN_PROMPT,
   buildNotebookPrompt,
+  buildRatatouilleAlarm,
+  RATATOUILLE_ALARM_DELAY_MS,
 } from '../athena/sequences';
 import { TEST_GUARDIAN_ID, FORCE_ONBOARDING_KEY } from '../config';
+import { resetTrail } from '../api/mission';
 
 /**
  * Authenticated home: the Athena console. Athena is the main interface — large
@@ -67,13 +70,19 @@ export function AthenaConsole() {
     ]);
   }, []);
 
+  // Another device on this credential changed shared mission state (trail
+  // key reported/decrypted/reset) — re-fetch so this panel stays live. The
+  // ref breaks the useChat ↔ useMission declaration-order cycle.
+  const missionRefreshRef = useRef<() => void>(() => {});
+  const onTrailUpdate = useCallback(() => missionRefreshRef.current(), []);
+
   const chat = useChat(
     guardian!.guardian_id,
     {
       display_name: guardian!.display_name,
       adventure_key: guardian!.adventure_key,
     },
-    { onBeforeAthenaMessage: holdForVoice }
+    { onBeforeAthenaMessage: holdForVoice, onTrailUpdate }
   );
 
   // Current mission + live family onboarding status. Drives the "Current
@@ -81,6 +90,7 @@ export function AthenaConsole() {
   const missionState = useMission(guardian!.adventure_key);
   const missionSendRef = useRef<MissionContext | undefined>(undefined);
   missionSendRef.current = missionState.chatContext;
+  missionRefreshRef.current = missionState.refresh;
 
   // Signal Decoder — the repeatable "help Athena decode signals" side activity.
   // Always available once Mission 1 (family check-in) is behind them. The
@@ -132,6 +142,13 @@ export function AthenaConsole() {
   // The scripted opener Athena just spoke, sent to the AI as the preceding turn
   // so her response to the Guardian's first reply has real context.
   const priorAthenaLineRef = useRef<string | null>(null);
+  // Which scripted beat the awaited reply answers: the opening channel check /
+  // notebook question, or the Ratatouille alarm that interrupts afterwards.
+  const onboardingBeatRef = useRef<'opening' | 'ratatouille_alarm'>('opening');
+  // Set when the channel-check reply should be followed by the panicked
+  // "Ratatouille is MISSING" reveal (first-login Rescue Ratatouille only).
+  const alarmPendingRef = useRef(false);
+  const alarmTimerRef = useRef<number | null>(null);
   const setStep = useCallback((s: OnboardingStep) => {
     onboardingStepRef.current = s;
     setOnboardingStep(s);
@@ -159,6 +176,26 @@ export function AthenaConsole() {
       ? chat.messages.filter((m) => !historyUuidsRef.current!.has(m.uuid))
       : []
     : chat.messages;
+
+  // Dev-only trail reset (test Guardian only): wipes this account's key/clue
+  // progress on the server so the Ratatouille hunt can be run again.
+  const [resettingTrail, setResettingTrail] = useState(false);
+  const resetTrailProgress = useCallback(async () => {
+    if (resettingTrail) return;
+    setResettingTrail(true);
+    try {
+      await resetTrail();
+      // Let the panel auto-expand announce the freshly reset mission again.
+      localStorage.removeItem('guardian-mission-seen:mission-1-ratatouille-trail:key_hunt');
+      missionState.refresh();
+    } catch {
+      // Leave state as-is; the menu stays open so the tester can retry.
+      return;
+    } finally {
+      setResettingTrail(false);
+    }
+    setMenuOpen(false);
+  }, [resettingTrail, missionState]);
 
   const toggleOnboarding = useCallback(() => {
     setForceOnboarding((v) => {
@@ -230,19 +267,31 @@ export function AthenaConsole() {
   // normal turn — which is precisely what the conversation becomes from here.
   const completeOnboarding = useCallback(
     (userText: string) => {
+      const beat = onboardingBeatRef.current;
       setStep(null);
+      // The channel check done, a brand-new Rescue Ratatouille Guardian is due
+      // the campaign hook: once Athena's welcome reply lands, she is
+      // interrupted by the "Ratatouille is MISSING" alert.
+      if (
+        beat === 'opening' &&
+        !!arrivalRef.current?.isFirstLogin &&
+        guardian!.adventure_key === 'rescue_ratatouille'
+      ) {
+        alarmPendingRef.current = true;
+      }
       void chat
         .sendMessage(userText, {
           onboarding: {
             priorAthenaLine: priorAthenaLineRef.current || '',
-            firstContact: !!arrivalRef.current?.isFirstLogin,
+            firstContact: beat === 'opening' && !!arrivalRef.current?.isFirstLogin,
+            ...(beat === 'ratatouille_alarm' ? { beat } : {}),
           },
           mission: missionSendRef.current,
           decodes: decodesContext(),
         })
         .catch(() => undefined);
     },
-    [chat, setStep, decodesContext]
+    [chat, guardian, setStep, decodesContext]
   );
 
   // Single entry point for user input from both the composer and voice. During
@@ -343,6 +392,32 @@ export function AthenaConsole() {
       tts.speak(last.text);
     }
   }, [chat.messages, chat.ready, tts]);
+
+  // The Ratatouille inciting incident: once Athena's (AI) reply to the channel
+  // check has been revealed, hold a short beat, then interrupt with the scripted
+  // panicked alarm and await the Guardian's reaction — which flows back through
+  // the onboarding pipeline tagged with the 'ratatouille_alarm' beat so the live
+  // AI answers it in-character.
+  useEffect(() => {
+    if (!alarmPendingRef.current) return;
+    const last = chat.messages[chat.messages.length - 1];
+    if (!last || last.is_human || last.uuid.startsWith('local-')) return;
+    alarmPendingRef.current = false;
+    const alarm = buildRatatouilleAlarm(guardian!.display_name);
+    alarmTimerRef.current = window.setTimeout(() => {
+      alarmTimerRef.current = null;
+      priorAthenaLineRef.current = alarm;
+      onboardingBeatRef.current = 'ratatouille_alarm';
+      sayAthena(alarm);
+      setStep('awaiting-user');
+    }, RATATOUILLE_ALARM_DELAY_MS);
+  }, [chat.messages, guardian, sayAthena, setStep]);
+  useEffect(
+    () => () => {
+      if (alarmTimerRef.current !== null) window.clearTimeout(alarmTimerRef.current);
+    },
+    []
+  );
 
   // Mission transitions happen from chat messages on the backend. Refresh after
   // each new persisted turn so PORTICO and the final cipher update the panel.
@@ -454,6 +529,20 @@ export function AthenaConsole() {
                   <span className="opacity-50">{tts.enabled ? 'on' : 'off'}</span>
                 </button>
               )}
+              {isTestUser && guardian!.adventure_key === 'rescue_ratatouille' && (
+                <button
+                  role="menuitem"
+                  onClick={() => void resetTrailProgress()}
+                  disabled={resettingTrail}
+                  title="Wipe this account's trail-mission keys and clues (test account only)"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-emerald-500/10 disabled:opacity-40"
+                >
+                  <span className="w-5 text-center text-base leading-none" aria-hidden>
+                    ♻️
+                  </span>
+                  {resettingTrail ? 'Resetting…' : 'Reset trail'}
+                </button>
+              )}
               {isTestUser && (
                 <button
                   role="menuitemcheckbox"
@@ -496,8 +585,11 @@ export function AthenaConsole() {
           isThinking={chat.isThinking}
           onReady={onUnityReady}
         />
-        {/* Overlays Athena so mission details never shrink the Unity stage. */}
-        <CurrentMission state={missionState} />
+        {/* Overlays Athena so mission details never shrink the Unity stage.
+            Auto-expand is held back during first contact so the cinematic
+            onboarding (greeting → channel check → Ratatouille alarm) plays
+            out uncovered; the compact mission bar stays visible. */}
+        <CurrentMission state={missionState} autoOpen={!isOnboarding} />
         {/* Signal Decoder launcher — the always-on side activity once Mission 1 is done. */}
         {decoderAvailable && !arriving && (
           <button

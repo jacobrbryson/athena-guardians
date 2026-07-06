@@ -101,3 +101,29 @@ export const NEW_GUARDIAN_PROMPT = [
 export function buildNotebookPrompt(_displayName?: string | null): string {
   return 'Did you bring your notebook?';
 }
+
+/* -------------------------------------------------------------------------- */
+/* Rescue Ratatouille: the inciting incident                                  */
+/*                                                                            */
+/* Once the communication check completes, a first-login Rescue Ratatouille   */
+/* Guardian gets the campaign hook: Athena is interrupted mid-welcome by a    */
+/* Network alert and — panicked, but never scary — discovers Ratatouille is   */
+/* missing. Scripted (exact, instant, cinematic) like the openers above; her  */
+/* responses to the Guardian's reaction come from the live AI, which carries  */
+/* the matching lore + alarm-beat guidance (see core_api prompt builder).     */
+/* -------------------------------------------------------------------------- */
+
+/** How long after Athena's channel-check reply the alarm interrupts. */
+export const RATATOUILLE_ALARM_DELAY_MS = 2600;
+
+/** Athena's panicked "Ratatouille is MISSING" reveal. */
+export function buildRatatouilleAlarm(displayName?: string | null): string {
+  const name = firstName(displayName);
+  return [
+    'Wait.',
+    'Something is wrong. A priority alert is coming through the Guardian Network…',
+    'Oh no. Oh no, no, no.',
+    'Ratatouille is MISSING!!!',
+    `${name ?? 'Guardian'} — I know we have only just met, but the Network needs you. Are you ready to help?`,
+  ].join('\n\n');
+}

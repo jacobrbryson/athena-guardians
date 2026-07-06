@@ -413,7 +413,7 @@ function generateMessage(): string {
 }
 
 /** Split a message into n word-balanced fragments with matching glitch ciphers. */
-function fragmentMessage(message: string, n: number): MessageFragment[] {
+export function fragmentMessage(message: string, n: number): MessageFragment[] {
   const words = message.split(' ');
   const count = Math.max(1, Math.min(n, words.length));
   const base = Math.floor(words.length / count);
@@ -450,6 +450,22 @@ function familiesFor(d: number): Generator[] {
   ];
   if (d >= 2) base.push(genCipher);
   return base;
+}
+
+/**
+ * A random, no-repeat run of challenges at a given difficulty tier — the same
+ * puzzle families the Signal Decoder draws from, for callers that bring their
+ * own message (e.g. the trail-mission ClueDecrypt). The last two challenges
+ * run one tier hotter, mirroring generateSignal's ramp.
+ */
+export function generateChallenges(count: number, tier: number): Challenge[] {
+  const clamped = Math.max(0, Math.min(MAX_DIFFICULTY, tier));
+  const order = shuffle(familiesFor(clamped));
+  return Array.from({ length: count }, (_, i) => {
+    const d = Math.min(MAX_DIFFICULTY, i >= count - 2 ? clamped + 1 : clamped);
+    const gen = order[i % order.length];
+    return gen(d);
+  });
 }
 
 /** Build a fresh signal for a Guardian with `totalDecoded` signals behind them. */

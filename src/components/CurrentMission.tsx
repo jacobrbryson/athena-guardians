@@ -1,16 +1,49 @@
-import { useEffect, useRef, useState } from 'react';
-import type { MissionFamily, MissionPhase } from '../api/mission';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import {
+  reportTrailKey,
+  type MissionFamily,
+  type MissionPhase,
+  type TrailPending,
+  type TrailState,
+} from '../api/mission';
 import type { MissionState } from '../missions/useMission';
+import { ClueDecrypt } from '../decode/ClueDecrypt';
 
-export function CurrentMission({ state }: { state: MissionState }) {
-  const { mission, phase, families, pending, loading, error } = state;
+export function CurrentMission({
+  state,
+  autoOpen = true,
+}: {
+  state: MissionState;
+  /** Suppress the once-per-phase auto-expand (e.g. during first contact). */
+  autoOpen?: boolean;
+}) {
+  const { mission, phase, families, pending, trail, loading, error } = state;
   const [open, setOpen] = useState(false);
   const previousPhase = useRef<MissionPhase | null>(null);
 
   useEffect(() => {
-    if (phase && phase !== 'check_in' && previousPhase.current !== phase) setOpen(true);
+    if (!autoOpen) return;
+    if (mission && phase && phase !== 'check_in' && previousPhase.current !== phase) {
+      const seenKey = `guardian-mission-seen:${mission.id}:${phase}`;
+      let seen = false;
+      try {
+        seen = window.localStorage.getItem(seenKey) === 'true';
+      } catch {
+        // Storage may be unavailable in privacy-restricted browsers. In that
+        // case, preserve the existing once-per-page-load behavior.
+      }
+
+      if (!seen) {
+        setOpen(true);
+        try {
+          window.localStorage.setItem(seenKey, 'true');
+        } catch {
+          // The mission remains usable even when persistence is unavailable.
+        }
+      }
+    }
     previousPhase.current = phase;
-  }, [phase]);
+  }, [mission, phase, autoOpen]);
 
   if (!mission) return null;
 
@@ -22,23 +55,49 @@ export function CurrentMission({ state }: { state: MissionState }) {
         ? '!'
         : phase === 'check_in'
           ? `${checkedIn}/${families.length}`
-          : mission.status;
+          : phase === 'key_hunt' && trail
+            ? `${trail.keysUsed}/${trail.keysTotal}`
+            : mission.status;
+
+  // The collapsed bar blinks while a mission is live and wants attention —
+  // Athena directs Guardians to "the blinking mission bar at the top of the
+  // screen", so this is the visual she is talking about. Calm once opened.
+  const attention =
+    !open &&
+    (phase === 'active' || (phase === 'key_hunt' && !!trail && !trail.complete));
 
   return (
     <section
       className={`absolute inset-x-0 top-0 z-30 border-b text-emerald-50 transition-colors duration-300 ${
         open
           ? 'bottom-0 flex flex-col overflow-hidden border-emerald-200/20 bg-gradient-to-b from-black/75 to-black/50 shadow-2xl shadow-black/60 backdrop-blur-xl'
-          : 'border-emerald-500/15 bg-black/90 shadow-lg shadow-black/50 backdrop-blur-sm'
+          : attention
+            ? 'border-amber-300/40 bg-black/90 shadow-lg shadow-amber-400/10 backdrop-blur-sm'
+            : 'border-emerald-500/15 bg-black/90 shadow-lg shadow-black/50 backdrop-blur-sm'
       }`}
     >
+      {attention && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 animate-pulse bg-amber-400/10"
+        />
+      )}
       <button
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         className="flex w-full items-center justify-between gap-2 px-4 py-2 text-left text-[11px] font-mono uppercase tracking-[0.2em] hover:bg-emerald-500/5"
       >
         <span className="flex min-w-0 items-center gap-2">
-          <span aria-hidden className={phase === 'decrypting' ? 'animate-pulse text-cyan-300' : 'text-amber-300'}>
+          <span
+            aria-hidden
+            className={
+              phase === 'decrypting'
+                ? 'animate-pulse text-cyan-300'
+                : attention
+                  ? 'animate-pulse text-amber-300'
+                  : 'text-amber-300'
+            }
+          >
             ◆
           </span>
           <span className="shrink-0 opacity-60">Mission {mission.number}</span>
@@ -69,6 +128,9 @@ export function CurrentMission({ state }: { state: MissionState }) {
           )}
           {!error && phase === 'active' && <ActiveFieldMission summary={mission.summary} />}
           {!error && phase === 'decrypting' && <DecryptingMission summary={mission.summary} />}
+          {!error && phase === 'key_hunt' && trail && (
+            <TrailMission trail={trail} summary={mission.summary} refresh={state.refresh} />
+          )}
         </div>
       )}
     </section>
@@ -131,6 +193,195 @@ function ActiveFieldMission({ summary }: { summary: string }) {
       <p className="mt-4 border-t border-emerald-300/10 pt-3 text-xs text-emerald-200/55">
         Athena is monitoring this channel for discoveries.
       </p>
+    </div>
+  );
+}
+
+/** Kid-friendly copy for each way a key report can be refused. */
+const TRAIL_ERRORS: Record<string, string> = {
+  invalid: 'The Network does not recognize that key. Check the card and try again.',
+  used: 'That key has already been used — every key works only once. Find another card!',
+  pending_other: 'Finish the decryption that is already running first.',
+  complete: 'Every key has been used — the trail is complete!',
+  retry: 'The Network hiccuped. Try that key one more time.',
+};
+
+/**
+ * Rescue Ratatouille Mission 1: the key hunt. Shows the trail legs unlocked so
+ * far (always in order), takes the next decryption key from a found clue card,
+ * and runs the ClueDecrypt challenges before the clue is revealed. A key
+ * reported in chat shows up here as a resumable pending decryption.
+ */
+function TrailMission({
+  trail,
+  summary,
+  refresh,
+}: {
+  trail: TrailState;
+  summary: string;
+  refresh: () => void;
+}) {
+  const [key, setKey] = useState('');
+  const [failure, setFailure] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // The decryption run currently on screen (from key entry or a chat report).
+  const [active, setActive] = useState<TrailPending | null>(null);
+
+  const submitKey = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      const code = key.trim().toUpperCase();
+      if (code.length !== 4 || busy) return;
+      setBusy(true);
+      setFailure(null);
+      try {
+        const res = await reportTrailKey(code);
+        if (res?.success && res.clue && typeof res.clueIndex === 'number') {
+          setKey('');
+          setActive({
+            keyCode: code,
+            clueIndex: res.clueIndex,
+            clue: res.clue,
+            challenges: res.challenges || 3,
+          });
+        } else {
+          setFailure(TRAIL_ERRORS[res?.reason || ''] || TRAIL_ERRORS.retry);
+        }
+      } catch {
+        setFailure(TRAIL_ERRORS.retry);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [key, busy]
+  );
+
+  const closeDecrypt = useCallback(() => {
+    setActive(null);
+    setFailure(null);
+    refresh();
+  }, [refresh]);
+
+  return (
+    <div>
+      <p className="mb-3 text-xs leading-relaxed opacity-60">{summary}</p>
+
+      {/* Key progress pips */}
+      <div className="mb-4 flex items-center gap-2">
+        <span className="flex gap-1" aria-hidden>
+          {Array.from({ length: trail.keysTotal }, (_, i) => (
+            <span
+              key={i}
+              className={`h-2 w-2 rounded-full ${
+                i < trail.keysUsed
+                  ? 'bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.6)]'
+                  : i === trail.keysUsed && trail.pending
+                    ? 'animate-pulse bg-cyan-300'
+                    : 'bg-white/15'
+              }`}
+            />
+          ))}
+        </span>
+        <span className="text-[10px] font-mono uppercase tracking-[0.2em] opacity-50">
+          {trail.keysUsed}/{trail.keysTotal} keys
+        </span>
+      </div>
+
+      {/* Unlocked trail legs, strictly in order */}
+      {trail.clues.length > 0 ? (
+        <ol className="space-y-1.5">
+          {trail.clues.map((clue) => (
+            <li
+              key={clue.index}
+              className="flex items-baseline gap-2 rounded-lg border border-emerald-300/10 bg-emerald-400/[0.04] px-3 py-1.5 font-mono text-xs"
+            >
+              <span className="w-5 shrink-0 text-right tabular-nums text-amber-300/80">
+                {clue.index === 0 ? '⚑' : clue.index}
+              </span>
+              <span className="min-w-0 text-emerald-100/90">
+                {clue.index === 0 ? (
+                  <>START — {clue.description}</>
+                ) : (
+                  <>
+                    <span className="tabular-nums">{clue.distance} m</span>
+                    <span className="opacity-50"> @ </span>
+                    <span className="tabular-nums">{clue.bearing}°</span>
+                    <span className="opacity-50"> — </span>
+                    {clue.description}
+                  </>
+                )}
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-3 text-center text-xs opacity-50">
+          No clues decrypted yet. Find a card marked with the Guardians logo!
+        </p>
+      )}
+
+      {/* Next action: celebrate, resume a pending decryption, or take a key. */}
+      {trail.complete ? (
+        <div className="mt-4 rounded-xl border border-amber-300/25 bg-amber-300/[0.07] px-4 py-3 text-center">
+          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-amber-200">
+            🏆 Trail complete
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-emerald-50/80">
+            Follow every leg in order from the very start — distances and
+            bearings, one at a time. Ratatouille is waiting at the end!
+          </p>
+        </div>
+      ) : trail.pending && !active ? (
+        <button
+          onClick={() => setActive(trail.pending)}
+          className="mt-4 w-full rounded-full bg-cyan-500/80 px-4 py-2.5 text-sm font-semibold text-black transition active:scale-95"
+        >
+          🔐 Continue decrypting clue {trail.pending.clueIndex + 1}
+        </button>
+      ) : !active ? (
+        <form onSubmit={submitKey} className="mt-4">
+          <label
+            htmlFor="trail-key"
+            className="block text-[10px] font-mono uppercase tracking-[0.25em] opacity-50"
+          >
+            Report a decryption key
+          </label>
+          <div className="mt-1.5 flex gap-2">
+            <input
+              id="trail-key"
+              value={key}
+              onChange={(e) => {
+                setKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4));
+                setFailure(null);
+              }}
+              placeholder="····"
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              className="w-28 rounded-lg border border-amber-300/25 bg-black/40 px-3 py-2 text-center font-mono text-lg uppercase tracking-[0.4em] text-amber-100 outline-none placeholder:opacity-30 focus:border-amber-300/60"
+            />
+            <button
+              type="submit"
+              disabled={key.length !== 4 || busy}
+              className="flex-1 rounded-lg bg-amber-400/90 px-4 py-2 text-sm font-semibold text-black transition disabled:opacity-30 active:scale-95"
+            >
+              {busy ? 'Reporting…' : 'Report key'}
+            </button>
+          </div>
+          {failure && <p className="mt-2 text-xs text-amber-300">{failure}</p>}
+        </form>
+      ) : null}
+
+      {active && (
+        <ClueDecrypt
+          keyCode={active.keyCode}
+          clue={active.clue}
+          challengeCount={active.challenges}
+          keysTotal={trail.keysTotal}
+          onUnlocked={closeDecrypt}
+          onClose={closeDecrypt}
+        />
+      )}
     </div>
   );
 }

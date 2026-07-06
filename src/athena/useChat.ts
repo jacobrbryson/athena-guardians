@@ -9,7 +9,7 @@ import { wsUrl } from '../config';
  *   GET  /api/v1/session?sessionId=...        -> { session: { uuid, ... } }
  *   GET  /api/v1/message?sessionId=...        -> Message[]
  *   POST /api/v1/message { text, sessionId }  -> { message }
- *   WS   /ws?sessionId=...                     -> rpc: addMessage | sessionStatus
+ *   WS   /ws?sessionId=...                     -> rpc: addMessage | sessionStatus | trailUpdate
  *
  * Auth rides on the httpOnly session cookie (sent automatically). Because
  * Safari does not reliably attach the cross-site cookie to WebSocket upgrades
@@ -36,6 +36,8 @@ export interface GuardianContext {
 export interface OnboardingContext {
   priorAthenaLine: string;
   firstContact: boolean;
+  /** Story beat this reply answers (default: the opening channel check). */
+  beat?: 'ratatouille_alarm';
 }
 
 /** Active-mission steering, sent so Athena can nudge toward the objective. */
@@ -45,7 +47,7 @@ export interface MissionContext {
   title?: string;
   directive: string;
   /** Persistent server-owned mission phase. */
-  phase?: 'check_in' | 'active' | 'decrypting';
+  phase?: 'check_in' | 'active' | 'decrypting' | 'key_hunt';
   /** family_onboarding: names (with regions) of families still to make contact. */
   pendingFamilies?: string[];
   /** convergence: the piece this family holds. */
@@ -80,6 +82,13 @@ export interface ChatOptions {
    * callers are expected to cap themselves (see MAX_VOICE_HOLD_MS).
    */
   onBeforeAthenaMessage?: (message: Message) => Promise<void>;
+  /**
+   * Fired when the server announces shared trail-mission state changed —
+   * typically because ANOTHER device on the same guardian credential reported
+   * or decrypted a key. Callers re-fetch the mission so every device's panel
+   * stays live. Ping-only: no payload rides the socket.
+   */
+  onTrailUpdate?: () => void;
 }
 
 export type ChatTransport = 'connecting' | 'ws' | 'polling';
@@ -145,6 +154,8 @@ export function useChat(
   guardianRef.current = guardian;
   const gateRef = useRef<ChatOptions['onBeforeAthenaMessage']>(options?.onBeforeAthenaMessage);
   gateRef.current = options?.onBeforeAthenaMessage;
+  const trailUpdateRef = useRef<ChatOptions['onTrailUpdate']>(options?.onTrailUpdate);
+  trailUpdateRef.current = options?.onTrailUpdate;
 
   const storageKey = `guardian_sessionId:${guardianId}`;
 
@@ -278,6 +289,9 @@ export function useChat(
           }
           if (msg?.rpc === 'sessionStatus' && msg.session?.is_busy === true) {
             setThinking(true);
+          }
+          if (msg?.rpc === 'trailUpdate') {
+            trailUpdateRef.current?.();
           }
         } catch (err) {
           console.error('useChat: invalid WS JSON', err);
