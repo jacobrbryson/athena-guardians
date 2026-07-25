@@ -8,6 +8,7 @@ import {
 } from '../api/mission';
 import type { MissionState } from '../missions/useMission';
 import { ClueDecrypt } from '../decode/ClueDecrypt';
+import { IndexClueDecrypt } from '../decode/IndexClueDecrypt';
 
 export function CurrentMission({
   state,
@@ -17,7 +18,7 @@ export function CurrentMission({
   /** Suppress the once-per-phase auto-expand (e.g. during first contact). */
   autoOpen?: boolean;
 }) {
-  const { mission, phase, families, pending, trail, loading, error } = state;
+  const { mission, phase, families, pending, trail, index, indexClue, loading, error } = state;
   const [open, setOpen] = useState(false);
   const previousPhase = useRef<MissionPhase | null>(null);
 
@@ -126,7 +127,14 @@ export function CurrentMission({
           {!error && phase === 'check_in' && (
             <CheckInMission families={families} summary={mission.summary} />
           )}
-          {!error && phase === 'active' && <ActiveFieldMission summary={mission.summary} />}
+          {!error && phase === 'active' && (
+            <ActiveFieldMission
+              summary={mission.summary}
+              index={index}
+              clue={indexClue}
+              refresh={state.refresh}
+            />
+          )}
           {!error && phase === 'decrypting' && <DecryptingMission summary={mission.summary} />}
           {!error && phase === 'key_hunt' && trail && (
             <TrailMission trail={trail} summary={mission.summary} refresh={state.refresh} />
@@ -176,7 +184,23 @@ function CheckInMission({ families, summary }: { families: MissionFamily[]; summ
   );
 }
 
-function ActiveFieldMission({ summary }: { summary: string }) {
+function ActiveFieldMission({
+  summary,
+  index,
+  clue,
+  refresh,
+}: {
+  summary: string;
+  index: MissionState['index'];
+  clue: MissionState['indexClue'];
+  refresh: () => void;
+}) {
+  const [decoding, setDecoding] = useState(false);
+  const finish = useCallback(() => {
+    setDecoding(false);
+    refresh();
+  }, [refresh]);
+
   return (
     <div className="mx-auto max-w-sm py-4 text-center">
       <div className="relative mx-auto h-24 w-24">
@@ -193,6 +217,26 @@ function ActiveFieldMission({ summary }: { summary: string }) {
       <p className="mt-4 border-t border-emerald-300/10 pt-3 text-xs text-emerald-200/55">
         Athena is monitoring this channel for discoveries.
       </p>
+      {index && (
+        <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.2em] text-amber-200/70">
+          {index.found}/{index.total} records recovered
+        </p>
+      )}
+      {clue && (
+        <button
+          onClick={() => setDecoding(true)}
+          className="mt-5 w-full rounded-full bg-cyan-500/85 px-5 py-3 text-sm font-semibold text-black transition active:scale-95"
+        >
+          🔐 Decode the next card location
+        </button>
+      )}
+      {decoding && clue && (
+        <IndexClueDecrypt
+          challengeCount={clue.challenges}
+          onClose={() => setDecoding(false)}
+          onRevealed={finish}
+        />
+      )}
     </div>
   );
 }

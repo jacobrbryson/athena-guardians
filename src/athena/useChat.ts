@@ -9,7 +9,7 @@ import { wsUrl } from '../config';
  *   GET  /api/v1/session?sessionId=...        -> { session: { uuid, ... } }
  *   GET  /api/v1/message?sessionId=...        -> Message[]
  *   POST /api/v1/message { text, sessionId }  -> { message }
- *   WS   /ws?sessionId=...                     -> rpc: addMessage | sessionStatus | trailUpdate
+ *   WS   /ws?sessionId=...                     -> rpc: addMessage | sessionStatus | trailUpdate | indexUpdate
  *
  * Auth rides on the httpOnly session cookie (sent automatically). Because
  * Safari does not reliably attach the cross-site cookie to WebSocket upgrades
@@ -290,7 +290,7 @@ export function useChat(
           if (msg?.rpc === 'sessionStatus' && msg.session?.is_busy === true) {
             setThinking(true);
           }
-          if (msg?.rpc === 'trailUpdate') {
+          if (msg?.rpc === 'trailUpdate' || msg?.rpc === 'indexUpdate') {
             trailUpdateRef.current?.();
           }
         } catch (err) {

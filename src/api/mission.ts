@@ -44,6 +44,18 @@ export interface TrailState {
   pending: TrailPending | null;
 }
 
+export interface IndexState {
+  found: number;
+  total: number;
+  complete: boolean;
+  act: number;
+}
+
+export interface IndexClueState {
+  pending: true;
+  challenges: number;
+}
+
 export interface CurrentMissionResponse {
   success: boolean;
   adventure_key: string;
@@ -51,6 +63,8 @@ export interface CurrentMissionResponse {
   mission: CurrentMissionDescriptor | null;
   families?: MissionFamily[];
   trail?: TrailState;
+  index?: IndexState;
+  indexClue?: IndexClueState | null;
 }
 
 export type TrailReportFailure =
@@ -88,6 +102,14 @@ export function reportTrailKey(key: string) {
 /** Decryption challenges done — unlock the pending key's clue. */
 export function completeTrailKey(key: string) {
   return api.post<TrailCompleteResponse>('/api/v1/mission/trail/complete-key', { key });
+}
+
+export function completeIndexClue() {
+  return api.post<{
+    success: boolean;
+    reason?: string;
+    clue?: { text: string };
+  }>('/api/v1/mission/index/clue/complete', {});
 }
 
 /** Test-account-only: wipe the caller's own trail progress. */

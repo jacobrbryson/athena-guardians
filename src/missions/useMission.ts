@@ -4,6 +4,8 @@ import {
   type CurrentMissionDescriptor,
   type MissionFamily,
   type MissionPhase,
+  type IndexState,
+  type IndexClueState,
   type TrailState,
 } from '../api/mission';
 import type { MissionContext } from '../athena/useChat';
@@ -15,6 +17,8 @@ export interface MissionState {
   pending: MissionFamily[];
   /** Rescue Ratatouille trail-mission state (null for other adventures). */
   trail: TrailState | null;
+  index: IndexState | null;
+  indexClue: IndexClueState | null;
   complete: boolean;
   loading: boolean;
   error: boolean;
@@ -27,6 +31,8 @@ export function useMission(adventureKey: string | null | undefined): MissionStat
   const [phase, setPhase] = useState<MissionPhase | null>(null);
   const [families, setFamilies] = useState<MissionFamily[]>([]);
   const [trail, setTrail] = useState<TrailState | null>(null);
+  const [index, setIndex] = useState<IndexState | null>(null);
+  const [indexClue, setIndexClue] = useState<IndexClueState | null>(null);
   const [loading, setLoading] = useState(Boolean(adventureKey));
   const [error, setError] = useState(false);
 
@@ -37,6 +43,8 @@ export function useMission(adventureKey: string | null | undefined): MissionStat
       setPhase(null);
       setFamilies([]);
       setTrail(null);
+      setIndex(null);
+      setIndexClue(null);
       setLoading(false);
       return () => undefined;
     }
@@ -50,6 +58,8 @@ export function useMission(adventureKey: string | null | undefined): MissionStat
         setPhase(response.phase ?? null);
         setFamilies(Array.isArray(response.families) ? response.families : []);
         setTrail(response.trail ?? null);
+        setIndex(response.index ?? null);
+        setIndexClue(response.indexClue ?? null);
       })
       .catch(() => {
         if (!cancelled) setError(true);
@@ -79,7 +89,7 @@ export function useMission(adventureKey: string | null | undefined): MissionStat
   }, [load]);
 
   useEffect(() => {
-    if (phase !== 'key_hunt') return;
+    if (phase !== 'key_hunt' && phase !== 'active') return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') load();
     }, 60_000);
@@ -105,7 +115,9 @@ export function useMission(adventureKey: string | null | undefined): MissionStat
     families,
     pending,
     trail,
-    complete: trail?.complete ?? false,
+    index,
+    indexClue,
+    complete: trail?.complete ?? index?.complete ?? false,
     loading,
     error,
     refresh: load,
