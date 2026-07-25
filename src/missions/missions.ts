@@ -8,7 +8,7 @@
  */
 import data from './missions.json';
 
-export type MissionObjective = 'family_onboarding' | 'field_mission';
+export type MissionObjective = 'family_onboarding' | 'field_mission' | 'index';
 export type MissionStatus = 'active' | 'locked' | 'complete';
 
 export interface Mission {

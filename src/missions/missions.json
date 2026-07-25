@@ -16,7 +16,7 @@
     {
       "id": "mission-2-portico",
       "order": 2,
-      "status": "locked",
+      "status": "complete",
       "adventureKeys": ["lake_norman_guardians"],
       "title": "The Portico Signal",
       "summary": "A Guardian-marked field signal has been recovered. Investigate it and report discoveries to Athena.",
@@ -24,6 +24,18 @@
       "incompleteNote": "Continue investigating the recovered signal.",
       "completeMessage": "Athena is decrypting the recovered message. Check back later.",
       "athenaDirective": "Guide the Guardians through the recovered field clue without solving it for them."
+    },
+    {
+      "id": "mission-3-first-watch",
+      "order": 3,
+      "status": "active",
+      "adventureKeys": ["lake_norman_guardians"],
+      "title": "The First Watch",
+      "summary": "Index cards from 1963 are scattered across the high ground. Find them and read Athena the code on each one.",
+      "objective": "index",
+      "incompleteNote": "Keep searching — the record is still in pieces.",
+      "completeMessage": "The index is whole. Every piece the First Watch scattered has been recovered.",
+      "athenaDirective": "The Guardians find the cards; you read what's on them. Never reveal an entry they haven't found."
     }
   ]
 }
