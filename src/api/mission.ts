@@ -112,6 +112,14 @@ export function completeIndexClue() {
   }>('/api/v1/mission/index/clue/complete', {});
 }
 
+export function startIndexClue() {
+  return api.post<{
+    success: boolean;
+    reason?: string;
+    clue?: IndexClueState;
+  }>('/api/v1/mission/index/clue/start', {});
+}
+
 /** Test-account-only: wipe the caller's own trail progress. */
 export function resetTrail() {
   return api.post<{ success: boolean; trail?: TrailState }>(

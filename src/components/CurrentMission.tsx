@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   reportTrailKey,
+  startIndexClue,
   type MissionFamily,
   type MissionPhase,
   type TrailPending,
@@ -20,7 +21,17 @@ export function CurrentMission({
 }) {
   const { mission, phase, families, pending, trail, index, indexClue, loading, error } = state;
   const [open, setOpen] = useState(false);
+  const [animatedIndexProgress, setAnimatedIndexProgress] = useState(0);
   const previousPhase = useRef<MissionPhase | null>(null);
+  const indexProgress =
+    index && index.total > 0 ? Math.min(100, (index.found / index.total) * 100) : 0;
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setAnimatedIndexProgress(indexProgress);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [indexProgress]);
 
   useEffect(() => {
     if (!autoOpen) return;
@@ -58,6 +69,8 @@ export function CurrentMission({
           ? `${checkedIn}/${families.length}`
           : phase === 'key_hunt' && trail
             ? `${trail.keysUsed}/${trail.keysTotal}`
+            : phase === 'active' && index
+              ? `${index.found}/${index.total}`
             : mission.status;
 
   // The collapsed bar blinks while a mission is live and wants attention —
@@ -117,6 +130,25 @@ export function CurrentMission({
           <span aria-hidden className="opacity-50">{open ? '▲' : '▼'}</span>
         </span>
       </button>
+
+      {index && (
+        <div
+          role="progressbar"
+          aria-label="Mission records recovered"
+          aria-valuemin={0}
+          aria-valuemax={index.total}
+          aria-valuenow={index.found}
+          aria-valuetext={`${index.found} of ${index.total} records recovered`}
+          className="relative h-1.5 w-full overflow-hidden bg-emerald-950/80"
+        >
+          <span
+            className="absolute inset-y-0 left-0 overflow-hidden bg-gradient-to-r from-blue-600 via-cyan-400 to-blue-400 shadow-[0_0_14px_rgba(34,211,238,0.8)] motion-safe:transition-[width] motion-safe:duration-1000 motion-safe:ease-out"
+            style={{ width: `${animatedIndexProgress}%` }}
+          >
+            <span className="absolute inset-y-0 w-2/5 bg-gradient-to-r from-transparent via-white/70 to-transparent motion-safe:animate-missionProgressSweep" />
+          </span>
+        </div>
+      )}
 
       {open && (
         <div className="min-h-0 flex-1 animate-missionSlide overflow-y-auto border-t border-white/5 px-4 pb-5 pt-3 text-sm">
@@ -196,6 +228,35 @@ function ActiveFieldMission({
   refresh: () => void;
 }) {
   const [decoding, setDecoding] = useState(false);
+  const [startedChallenges, setStartedChallenges] = useState<number | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState(false);
+  const challengeCount = clue?.challenges ?? startedChallenges;
+  const canDecode = !!clue || (!!index && index.found > 0 && !index.complete);
+
+  const openDecoder = useCallback(async () => {
+    if (challengeCount) {
+      setDecoding(true);
+      return;
+    }
+    if (starting) return;
+    setStarting(true);
+    setStartError(false);
+    try {
+      const result = await startIndexClue();
+      if (result.success && result.clue) {
+        setStartedChallenges(result.clue.challenges);
+        setDecoding(true);
+      } else {
+        setStartError(true);
+      }
+    } catch {
+      setStartError(true);
+    } finally {
+      setStarting(false);
+    }
+  }, [challengeCount, starting]);
+
   const finish = useCallback(() => {
     setDecoding(false);
     refresh();
@@ -222,17 +283,38 @@ function ActiveFieldMission({
           {index.found}/{index.total} records recovered
         </p>
       )}
-      {clue && (
+      {canDecode && (
         <button
-          onClick={() => setDecoding(true)}
+          onClick={() => void openDecoder()}
+          disabled={starting}
           className="mt-5 w-full rounded-full bg-cyan-500/85 px-5 py-3 text-sm font-semibold text-black transition active:scale-95"
         >
-          🔐 Decode the next card location
+          {starting
+            ? 'Contacting the Guardian Index…'
+            : clue || startedChallenges
+              ? '🔐 Continue decoding the next location'
+              : '🔐 Decode the next card location'}
         </button>
       )}
-      {decoding && clue && (
+      {!canDecode && index && index.found === 0 && (
+        <div className="mt-5 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.04] px-4 py-3">
+          <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-cyan-200/70">
+            🔒 Location decoder locked
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-emerald-100/65">
+            Find an Index card and report its four-character code to Athena.
+            Recovering that first record unlocks the puzzle for the next card’s location.
+          </p>
+        </div>
+      )}
+      {startError && (
+        <p className="mt-2 text-xs text-amber-300">
+          The Index could not start that decryption. Try again.
+        </p>
+      )}
+      {decoding && challengeCount && (
         <IndexClueDecrypt
-          challengeCount={clue.challenges}
+          challengeCount={challengeCount}
           onClose={() => setDecoding(false)}
           onRevealed={finish}
         />

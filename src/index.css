@@ -117,6 +117,7 @@ body {
   .animate-missionFail,
   .animate-missionReady,
   .animate-missionCta,
+  .animate-missionProgressSweep,
   .animate-decryptAttempt,
   .animate-decryptScan {
     animation: none !important;

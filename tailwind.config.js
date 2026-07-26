@@ -63,6 +63,10 @@ export default {
           '0%, 100%': { boxShadow: '0 0 20px rgba(253, 230, 138, 0.24)' },
           '50%': { boxShadow: '0 0 38px rgba(253, 230, 138, 0.55)' },
         },
+        missionProgressSweep: {
+          '0%': { transform: 'translateX(-120%)' },
+          '100%': { transform: 'translateX(250%)' },
+        },
         decryptAttempt: {
           '0%': { opacity: '0', transform: 'scale(1.08) skewX(-3deg)' },
           '18%': { opacity: '1', transform: 'scale(1) skewX(2deg)' },
@@ -88,6 +92,7 @@ export default {
         missionReady: 'missionReady 450ms ease-out both',
         missionCta:
           'missionCta 520ms ease-out both, missionCtaGlow 1.8s ease-in-out 520ms infinite',
+        missionProgressSweep: 'missionProgressSweep 2.2s ease-in-out infinite',
         decryptAttempt: 'decryptAttempt 480ms steps(2, end) both',
         decryptScan: 'decryptScan 480ms linear both',
       },
