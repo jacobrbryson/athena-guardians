@@ -147,7 +147,9 @@ gcloud run deploy athena-guardians --image athena-guardians --region us-central1
 ```
 
 - **Port binding:** `server.js` listens on `process.env.PORT` (Cloud Run sets it).
-- **Health check:** `GET /healthz` → `{ "status": "ok" }`.
+- **Health check:** `GET /health` → `{ "status": "ok" }` (also `/healthz`,
+  though the Google frontend swallows that exact path on Cloud Run and
+  answers its own 404 — point external probes at `/health`).
 - **SPA routing:** `server.js` falls back to `index.html` so `/:guardian_id`
   and the Phase 2 routes survive a hard refresh.
 

@@ -41,8 +41,12 @@ unityProxy.on('error', (err, _req, res) => {
   res?.end?.('Unity asset proxy error');
 });
 
-// Health check for Cloud Run / uptime probes.
-app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
+// Health check for Cloud Run / uptime probes. Both spellings on purpose: the
+// Google frontend answers a bare `/healthz` itself with its own 404 page and
+// never forwards it, so an external probe on that path reports the service
+// down while it is perfectly healthy. `/health` reaches us; `/healthz` still
+// works locally and behind any other proxy.
+app.get(['/healthz', '/health'], (_req, res) => res.json({ status: 'ok' }));
 
 app.use('/unity', (req, res) => {
   // Under the mount, req.url has '/unity' stripped — restore it so the upstream
