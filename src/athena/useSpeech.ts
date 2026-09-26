@@ -15,6 +15,16 @@ import type { AthenaBridge } from './UnityAthena';
 
 const STORAGE_KEY = 'guardian_tts_enabled';
 const GENERATION_TIMEOUT_MS = 30_000;
+// Singing runs on a slower model: ~15 s for a four-line song.
+const SING_GENERATION_TIMEOUT_MS = 75_000;
+// Said in her normal voice while a song generates. Short on purpose: each
+// is its own quick generation, and the point is to answer immediately.
+const SONG_INTROS = [
+  'Ooh, a song. Give me a second to warm up.',
+  'Okay, okay. Let me find the tune.',
+  "I'd love to. One moment.",
+  'Alright, clearing my throat.',
+];
 
 interface SpeechResponse {
   audioBase64: string;
@@ -49,8 +59,8 @@ export interface Speech {
   enabled: boolean;
   attachUnity: (bridge: AthenaBridge) => void;
   toggle: () => void;
-  /** Begin generating audio for `text` without playing it yet. */
-  prepare: (text: string) => PreparedSpeech;
+  /** Begin generating audio for `text` without playing it yet. `sing` sings it. */
+  prepare: (text: string, options?: { sing?: boolean }) => PreparedSpeech;
   speak: (text: string, onEnd?: () => void) => void;
   cancel: () => void;
 }
@@ -73,6 +83,9 @@ export function useSpeech(): Speech {
 
   const bridgeRef = useRef<AthenaBridge | null>(null);
   const pendingRef = useRef<PendingSpeech | null>(null);
+  // The prepared speech that last took the voice; a song waiting behind its
+  // intro only plays if it still holds it.
+  const ownerRef = useRef<string | null>(null);
 
   const finish = useCallback((requestId?: string) => {
     const pending = pendingRef.current;
@@ -88,6 +101,7 @@ export function useSpeech(): Speech {
   }, []);
 
   const cancel = useCallback(() => {
+    ownerRef.current = null;
     bridgeRef.current?.sendToGameObject('AthenaBridge', 'StopSpeech');
     finish();
   }, [finish]);
@@ -128,89 +142,128 @@ export function useSpeech(): Speech {
     if (!enabled) cancel();
   }, [cancel, enabled]);
 
-  const prepare = useCallback(
-    (text: string): PreparedSpeech => {
-      const trimmed = text?.trim();
-      const id = crypto.randomUUID();
-      const abort = new AbortController();
-      let audio: SpeechResponse | null = null;
-      let cancelled = false;
-      let genTimer: number | null = null;
-
-      const ready = new Promise<boolean>((resolve) => {
-        if (!enabledRef.current || !trimmed) {
-          resolve(false);
-          return;
-        }
-
-        genTimer = window.setTimeout(() => {
+  /**
+   * Fetch one generated clip. Resolves null on failure, timeout, or when
+   * `signal` aborts. Each clip has its own controller so a spoken intro timing
+   * out never takes the song down with it.
+   */
+  const fetchAudio = useCallback(
+    (text: string, sing: boolean, signal: AbortSignal): Promise<SpeechResponse | null> =>
+      new Promise((resolve) => {
+        const own = new AbortController();
+        if (signal.aborted) own.abort();
+        else signal.addEventListener('abort', () => own.abort(), { once: true });
+        const timer = window.setTimeout(() => {
           console.warn('useSpeech: voice generation timed out');
-          abort.abort();
-          resolve(false);
-        }, GENERATION_TIMEOUT_MS);
+          own.abort();
+          resolve(null);
+        }, sing ? SING_GENERATION_TIMEOUT_MS : GENERATION_TIMEOUT_MS);
 
         void fetch(proxyUrl('/api/v1/speech'), {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: trimmed }),
-          signal: abort.signal,
+          body: JSON.stringify(sing ? { text, style: 'sing' } : { text }),
+          signal: own.signal,
         })
           .then(async (response) => {
             if (!response.ok) throw new Error(`Speech request failed (${response.status})`);
             return (await response.json()) as SpeechResponse;
           })
           .then((payload) => {
-            if (genTimer !== null) window.clearTimeout(genTimer);
             if (!payload.audioBase64 || !payload.sampleRate || !payload.channels) {
               throw new Error('Speech response did not contain playable PCM audio');
             }
-            audio = payload;
-            resolve(!cancelled);
+            resolve(payload);
           })
           .catch((error: unknown) => {
-            if (genTimer !== null) window.clearTimeout(genTimer);
             if ((error as { name?: string }).name !== 'AbortError') {
               console.warn('useSpeech: speech failed', error);
             }
-            resolve(false);
-          });
+            resolve(null);
+          })
+          .finally(() => window.clearTimeout(timer));
+      }),
+    []
+  );
+
+  const prepare = useCallback(
+    (text: string, options?: { sing?: boolean }): PreparedSpeech => {
+      const trimmed = text?.trim();
+      const sing = options?.sing === true;
+      const id = crypto.randomUUID();
+      const abort = new AbortController();
+      let cancelled = false;
+      let intro: SpeechResponse | null = null;
+      let audio: SpeechResponse | null = null;
+
+      const active = enabledRef.current && !!trimmed;
+      const audioP = active ? fetchAudio(trimmed, sing, abort.signal) : Promise.resolve(null);
+      // A song takes ~15 s to generate. A short spoken line (a few seconds, on
+      // the fast model) covers the wait so she answers right away.
+      const introP =
+        active && sing
+          ? fetchAudio(SONG_INTROS[Math.floor(Math.random() * SONG_INTROS.length)], false, abort.signal)
+          : Promise.resolve(null);
+      void audioP.then((payload) => {
+        audio = payload;
+      });
+      void introP.then((payload) => {
+        intro = payload;
       });
 
+      // Ready as soon as something can start: the intro for a song, otherwise
+      // the clip itself. False only when there is nothing at all to play.
+      const ready = new Promise<boolean>((resolve) => {
+        void introP.then((payload) => payload && resolve(!cancelled));
+        void audioP.then((payload) => payload && resolve(!cancelled));
+        void Promise.all([introP, audioP]).then(([a, b]) => !a && !b && resolve(false));
+      });
+
+      const playClip = (clipId: string, payload: SpeechResponse, onEnd?: () => void) => {
+        // Stop anything currently speaking before starting this clip.
+        cancel();
+        const timer = window.setTimeout(
+          () => finish(clipId),
+          pcmDurationMs(payload.audioBase64, payload.sampleRate, payload.channels) + 2000
+        );
+        // The intro gets a throwaway controller: finishing it must not abort
+        // the song that is still being fetched.
+        pendingRef.current = { id: clipId, abort: clipId === id ? abort : new AbortController(), timer, onEnd };
+        const unityPayload: UnitySpeechPayload = { requestId: clipId, ...payload };
+        bridgeRef.current?.sendToGameObject('AthenaBridge', 'PlaySpeech', JSON.stringify(unityPayload));
+      };
+
       const play = (onEnd?: () => void) => {
-        const payload = audio;
-        if (cancelled || !payload || !enabledRef.current || !bridgeRef.current) {
+        if (cancelled || (!intro && !audio) || !enabledRef.current || !bridgeRef.current) {
           onEnd?.();
           return;
         }
-
-        // Stop anything currently speaking before starting this clip.
-        cancel();
-
-        const timer = window.setTimeout(
-          () => finish(id),
-          pcmDurationMs(payload.audioBase64, payload.sampleRate, payload.channels) + 2000
-        );
-        pendingRef.current = { id, abort, timer, onEnd };
-
-        const unityPayload: UnitySpeechPayload = { requestId: id, ...payload };
-        bridgeRef.current.sendToGameObject(
-          'AthenaBridge',
-          'PlaySpeech',
-          JSON.stringify(unityPayload)
-        );
+        // Played once the intro ends — unless something else has taken the
+        // voice since (a newer reply, a cancel, voice switched off).
+        const playMain = () => {
+          void audioP.then((payload) => {
+            if (!payload || cancelled || ownerRef.current !== id || !enabledRef.current || !bridgeRef.current) {
+              onEnd?.();
+              return;
+            }
+            playClip(id, payload, onEnd);
+          });
+        };
+        if (intro) playClip(`${id}:intro`, intro, playMain);
+        else playClip(id, audio!, onEnd);
+        ownerRef.current = id;
       };
 
       const cancelPrepared = () => {
         cancelled = true;
         abort.abort();
-        if (genTimer !== null) window.clearTimeout(genTimer);
-        if (pendingRef.current?.id === id) cancel();
+        if (pendingRef.current?.id.startsWith(id)) cancel();
       };
 
       return { ready, play, cancel: cancelPrepared };
     },
-    [cancel, finish]
+    [cancel, fetchAudio, finish]
   );
 
   const speak = useCallback(
