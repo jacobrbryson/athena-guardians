@@ -62,11 +62,10 @@ export function AthenaConsole() {
   const holdForVoice = useCallback(async (message: Message) => {
     const speech = ttsRef.current;
     if (!speech.enabled || !speech.isSupported || !message.text?.trim()) return;
-    const prepared = speech.prepare(message.text, { sing: message.sung });
+    // With lyrics, the held voice is her spoken lead-in (as quick as any
+    // reply); the song keeps generating behind it.
+    const prepared = speech.prepare(message.text, { lyrics: message.lyrics });
     preparedSpeechRef.current.set(message.uuid, prepared);
-    // A song takes ~15 s to generate. Holding her reply that long reads as her
-    // not answering, so the lyrics show now and she sings when it's ready.
-    if (message.sung) return;
     await Promise.race([
       prepared.ready,
       new Promise((resolve) => window.setTimeout(resolve, MAX_VOICE_HOLD_MS)),
@@ -639,6 +638,9 @@ export function AthenaConsole() {
                 }`}
               >
                 {m.text}
+                {m.lyrics && (
+                  <span className="mt-2 block italic text-emerald-200/90">♪ {m.lyrics}</span>
+                )}
               </p>
             </div>
           ))}

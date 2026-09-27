@@ -24,8 +24,11 @@ export interface Message {
   is_human: boolean;
   text: string;
   created_at?: string | number;
-  /** She is singing `text`, not speaking it. Live socket replies only. */
-  sung?: boolean;
+  /**
+   * A song she sings after saying `text`. Live socket replies only; the
+   * stored message holds both, so history shows the song as plain text.
+   */
+  lyrics?: string;
 }
 
 /** Non-sensitive guardian identity sent with each message to personalize Athena. */
