@@ -246,7 +246,8 @@ export function useChat(
 
     // Safari does not reliably attach the cross-site session cookie to the
     // WebSocket upgrade request, so exchange the cookie (over a regular
-    // fetch, which does carry it) for a short-lived ticket in the URL.
+    // fetch, which does carry it) for a short-lived ticket. The ticket rides
+    // in the subprotocol list, never the URL: request logs record URLs.
     // If the ticket fetch fails we still try cookie auth on the upgrade.
     void (async () => {
       let ticket: string | null = null;
@@ -259,10 +260,10 @@ export function useChat(
       if (closedRef.current || sessionRef.current !== session) return;
 
       const params = new URLSearchParams({ sessionId: session });
-      if (ticket) params.set('token', ticket);
+      const protocols = ticket ? ['athena.v1', `athena.ticket.${ticket}`] : ['athena.v1'];
       let ws: WebSocket;
       try {
-        ws = new WebSocket(wsUrl(`/ws?${params.toString()}`));
+        ws = new WebSocket(wsUrl(`/ws?${params.toString()}`), protocols);
       } catch (err) {
         // Some privacy modes refuse to even construct a socket — fall back to
         // polling and keep retrying on the normal backoff schedule.

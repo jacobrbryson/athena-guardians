@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { UNITY_ASSET_BASE, wsUrl } from '../config';
+import { UNITY_ASSET_BASE } from '../config';
 
 /**
  * Unity WebGL Athena player — a React port of the marketing app's
@@ -51,14 +51,12 @@ export function UnityAthena({ sessionId, isThinking, onReady }: Props) {
   // --- Unity -> app: connect Unity's own WebSocket once it signals ready. ---
   useEffect(() => {
     const onUnityWsReady = () => {
-      const session = sessionRef.current;
       const instance = instanceRef.current;
-      if (!session || !instance) return;
-
-      const url = wsUrl(`/ws?sessionId=${encodeURIComponent(session)}`);
-      const payload = JSON.stringify({ wsUrl: url, sessionId: session, token: '' });
-      instance.SendMessage('AthenaSocketBridge', 'ConfigureWebSocket', payload);
-      instance.SendMessage('AthenaSocketBridge', 'ConnectWebSocket');
+      if (!instance) return;
+      // No socket of Unity's own: all it did was wave on connect and follow
+      // thinking, which the page already drives (SetThinking below). Tell
+      // Unity it is "connected" and it waves.
+      instance.SendMessage('AthenaSocketBridge', 'OnWebSocketConnected');
     };
     window.addEventListener('athena-unity-ready-for-websocket', onUnityWsReady);
     return () =>
