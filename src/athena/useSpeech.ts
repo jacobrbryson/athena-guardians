@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { proxyUrl } from '../config';
+import { speechChunks } from './speechChunks';
 import type { AthenaBridge } from './UnityAthena';
 import warmupHumArpeggioUrl from './voice/warmup-hum-arpeggio.json?url';
 import warmupHumScaleUrl from './voice/warmup-hum-scale.json?url';
@@ -14,6 +15,10 @@ import warmupMimiUrl from './voice/warmup-mimi.json?url';
  * lets the chat hold Athena's text reveal until the voice can start with it
  * (see AthenaConsole's voice-sync gate); `speak()` remains as the one-shot
  * prepare-then-play convenience.
+ *
+ * A longer reply is voiced a sentence or so at a time (speechChunks), every
+ * part fetched at once: she starts when the first sentence is ready, not the
+ * whole reply, and each later part is in hand before the one before it ends.
  */
 
 const STORAGE_KEY = 'guardian_tts_enabled';
@@ -222,31 +227,39 @@ export function useSpeech(): Speech {
       const id = crypto.randomUUID();
       const abort = new AbortController();
       let cancelled = false;
-      let audio: SpeechResponse | null = null;
       let song: SpeechResponse | null = null;
       let songFailed = false;
 
       const active = enabledRef.current && !!trimmed;
-      const audioP = active ? fetchAudio(trimmed, false, abort.signal) : Promise.resolve(null);
+      const partsP = active
+        ? speechChunks(trimmed).map((part) => fetchAudio(part, false, abort.signal))
+        : [];
       // A song generates (~15 s) while she says her lead-in and hums a
       // warm-up; the hum is what keeps the switch to singing from being abrupt.
       const songP = active && lyrics ? fetchAudio(lyrics, true, abort.signal) : Promise.resolve(null);
       const warmupsP = active && lyrics ? loadWarmups() : Promise.resolve([] as SpeechResponse[]);
       const warmupStart = Math.floor(Math.random() * WARMUP_URLS.length);
-      void audioP.then((payload) => {
-        audio = payload;
+      // The first part that voiced (normally the first): where she starts.
+      // Null until known, -1 when every part failed.
+      let first: number | null = null;
+      const firstP = (async () => {
+        for (let i = 0; i < partsP.length; i++) if (await partsP[i]) return i;
+        return -1;
+      })();
+      void firstP.then((index) => {
+        first = index;
       });
       void songP.then((payload) => {
         song = payload;
         songFailed = !!lyrics && !payload;
       });
 
-      // Ready as soon as something can start: the spoken line, or the song if
-      // the spoken line failed. False only when there is nothing to play.
+      // Ready as soon as something can start: her first sentence, or the
+      // song if the spoken line failed. False only when there is nothing to play.
       const ready = new Promise<boolean>((resolve) => {
-        void audioP.then((payload) => payload && resolve(!cancelled));
+        void firstP.then((index) => index >= 0 && resolve(!cancelled));
         void songP.then((payload) => payload && resolve(!cancelled));
-        void Promise.all([audioP, songP]).then(([a, b]) => !a && !b && resolve(false));
+        void Promise.all([firstP, songP]).then(([a, b]) => a < 0 && !b && resolve(false));
       });
 
       // Something else may take the voice while a song is still coming (a
@@ -265,6 +278,25 @@ export function useSpeech(): Speech {
         pendingRef.current = { id: clipId, abort: clipId === id ? abort : new AbortController(), timer, onEnd };
         const unityPayload: UnitySpeechPayload = { requestId: clipId, ...payload };
         bridgeRef.current?.sendToGameObject('AthenaBridge', 'PlaySpeech', JSON.stringify(unityPayload));
+      };
+
+      // Her spoken parts in order, each played when the one before it ends. A
+      // part that is still generating is waited for; one that failed is
+      // skipped. Something else taking the voice ends the run.
+      const speakFrom = (index: number, done: () => void) => {
+        if (index >= partsP.length) {
+          done();
+          return;
+        }
+        void partsP[index].then((clip) => {
+          if (!stillOwner()) done();
+          else if (!clip) speakFrom(index + 1, done);
+          else {
+            // Without a song the last part owns `abort`; with one, the song does.
+            const clipId = index === partsP.length - 1 && !lyrics ? id : `${id}:part${index}`;
+            playClip(clipId, clip, () => speakFrom(index + 1, done));
+          }
+        });
       };
 
       // After the lead-in: always one warm-up (the bridge from talking to
@@ -298,14 +330,17 @@ export function useSpeech(): Speech {
       };
 
       const play = (onEnd?: () => void) => {
-        if (cancelled || !enabledRef.current || !bridgeRef.current || (!audio && !song)) {
+        // Nothing voiced in time (the reveal stopped waiting): stay quiet
+        // rather than start talking after the text has already landed.
+        const start = first !== null && first >= 0 ? first : -1;
+        if (cancelled || !enabledRef.current || !bridgeRef.current || (start < 0 && !song)) {
           onEnd?.();
           return;
         }
         ownerRef.current = id;
-        if (!lyrics) playClip(id, audio!, onEnd);
-        else if (audio) playClip(`${id}:lead`, audio, () => towardSong(0, onEnd));
-        else towardSong(0, onEnd);
+        const afterSpeech = lyrics ? () => towardSong(0, onEnd) : () => onEnd?.();
+        if (start >= 0) speakFrom(start, afterSpeech);
+        else afterSpeech();
       };
 
       const cancelPrepared = () => {
