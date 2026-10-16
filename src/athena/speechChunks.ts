@@ -3,19 +3,24 @@
  * talking once the first sentence is voiced instead of the whole reply.
  *
  * Voicing is roughly proportional to length, and every part is fetched at
- * once, so the first part is kept short (a sentence) and the second only a
- * little longer: each is ready before the one in front of it finishes
- * playing. Later parts are larger, because every boundary is a place her
- * phrasing restarts. Short replies stay whole — splitting them saves nothing.
+ * once, so the first part is kept short — its opening clause when the first
+ * sentence runs long — and the next only a little longer: each is ready
+ * before the one in front of it finishes playing. Later parts are larger,
+ * because every boundary is a place her phrasing restarts. Only a reply of a
+ * few words stays whole.
  *
  * Mirrored in companion/src/athena/speechChunks.ts and, for hands-free, in
  * native-runtime's SpeechChunks.java. Keep the three in step.
  */
 
 /** A reply this short is voiced in one go. */
-const WHOLE_MAX = 140;
+const WHOLE_MAX = 60;
 /** "Sure." alone is too short a part; it joins the next sentence. */
 const FIRST_MIN = 30;
+/** A first part longer than this is cut to its opening clause. */
+const FIRST_MAX = 70;
+/** Neither side of that cut is shorter than this, so no part is a word or two. */
+const CLAUSE_MIN = 18;
 const SECOND_MAX = 220;
 const LATER_MAX = 400;
 /** The server's limit on one /speech request (MAX_SPEECH_TEXT_LENGTH) is 800. */
@@ -43,6 +48,27 @@ export function sentences(text: string): string[] {
   }
   if (from < text.length) out.push(text.slice(from));
   return out.filter((sentence) => sentence.trim());
+}
+
+// Where a sentence can pause: punctuation first, then before a conjunction.
+const CLAUSE_BREAK = /[,;:]\s+|\s[—–-]\s/g;
+const CONJUNCTION = /\s(?=(?:and|but|so|because|which|while|or|then)\s)/gi;
+
+/**
+ * Where to cut a long first part so her voice starts on its opening clause:
+ * the earliest pause that leaves both sides at least CLAUSE_MIN, within
+ * FIRST_MAX. -1 when there is none, and the part is voiced as it is.
+ */
+export function clauseCut(part: string): number {
+  for (const pause of [CLAUSE_BREAK, CONJUNCTION]) {
+    pause.lastIndex = 0;
+    for (let match = pause.exec(part); match; match = pause.exec(part)) {
+      const cut = match.index + match[0].length;
+      if (cut > FIRST_MAX) break;
+      if (cut >= CLAUSE_MIN && part.length - cut >= CLAUSE_MIN) return cut;
+    }
+  }
+  return -1;
 }
 
 /** A run-on longer than one request allows, cut at the last space that fits. */
@@ -90,5 +116,8 @@ export function speechChunks(text: string): string[] {
     current += sentence;
   }
   if (current.trim()) parts.push(current);
-  return parts.map((part) => part.trim()).filter(Boolean);
+  const out = parts.map((part) => part.trim()).filter(Boolean);
+  const cut = out[0].length > FIRST_MAX ? clauseCut(out[0]) : -1;
+  if (cut > 0) out.splice(0, 1, out[0].slice(0, cut).trim(), out[0].slice(cut).trim());
+  return out;
 }
