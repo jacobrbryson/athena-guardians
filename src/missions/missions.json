@@ -28,7 +28,7 @@
     {
       "id": "mission-3-first-watch",
       "order": 3,
-      "status": "active",
+      "status": "complete",
       "adventureKeys": ["lake_norman_guardians"],
       "title": "The First Watch",
       "summary": "Index cards from 1963 are scattered across the high ground. Find them and read Athena the code on each one.",

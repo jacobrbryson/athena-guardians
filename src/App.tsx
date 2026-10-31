@@ -5,6 +5,8 @@ import { GuardianGate } from './pages/GuardianGate';
 import { AthenaConsole } from './pages/AthenaConsole';
 import { ComingSoon } from './pages/ComingSoon';
 import { GuardianTokenRedeem } from './pages/GuardianTokenRedeem';
+import { ConsentPrompt } from './components/ConsentPrompt';
+import { MissionSteps } from './components/MissionSteps';
 
 const ID_RE = /^\d{8}$/;
 
@@ -28,7 +30,7 @@ function Protected({ children }: { children: React.ReactNode }) {
 function Home() {
   const { status } = useAuth();
   if (status === 'loading') return <Splash />;
-  if (status === 'authenticated') return <AthenaConsole />;
+  if (status === 'authenticated') return <><AthenaConsole /><MissionSteps /><ConsentPrompt /></>;
   return <GuardianGate />;
 }
 
