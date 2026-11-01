@@ -65,6 +65,19 @@ export function MissionSteps() {
   }, [refresh]);
 
   const step = steps[0];
+  const unopened = step && !step.dueAt ? step.uuid : null;
+
+  // Only a card someone can really see counts as delivered, so a hidden tab waits.
+  useEffect(() => {
+    if (!unopened) return undefined;
+    const open = () => {
+      if (document.visibilityState !== 'visible') return;
+      api.post<Mine>(`${BASE}/${unopened}/seen`, {}).then((r) => setSteps(r.steps)).catch(() => undefined);
+    };
+    open();
+    document.addEventListener('visibilitychange', open);
+    return () => document.removeEventListener('visibilitychange', open);
+  }, [unopened]);
 
   const start = async (uuid: string) => {
     setBusy(true);
@@ -170,6 +183,8 @@ export function MissionSteps() {
         </label>
       ) : step.proof === 'none' || step.proof === 'kid_confirm' ? (
         <button type="button" disabled={busy} className="mt-3 rounded bg-cyan-500 px-3 py-1 font-semibold text-slate-950 disabled:opacity-50" onClick={() => void done()}>Done</button>
+      ) : step.proof === 'parent_confirm' ? (
+        <p className="mt-3 text-xs text-cyan-200">When it's done, ask your adult to check it. They'll mark it in their app.</p>
       ) : null}
       {note && <p className="mt-2 text-xs" role="status">{note}</p>}
     </aside>
